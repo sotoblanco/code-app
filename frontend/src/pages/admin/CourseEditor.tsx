@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, Code, Save, Trash2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { API_BASE_URL } from "../../config";
 
 interface Exercise {
     id: number;
@@ -34,7 +35,7 @@ export default function CourseEditor() {
 
     const fetchCourse = async () => {
         try {
-            const res = await fetch(`http://localhost:8000/courses/${id}`);
+            const res = await fetch(`${API_BASE_URL}/courses/${id}`);
             if (res.ok) {
                 const data = await res.json();
                 setCourse(data);
@@ -53,7 +54,7 @@ export default function CourseEditor() {
         if (!course) return;
 
         try {
-            const res = await fetch(`http://localhost:8000/courses/${course.id}/exercises/`, {
+            const res = await fetch(`${API_BASE_URL}/courses/${course.id}/exercises/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -85,7 +86,7 @@ export default function CourseEditor() {
         if (!course || !confirm("Are you sure you want to delete this exercise?")) return;
 
         try {
-            const res = await fetch(`http://localhost:8000/courses/${course.id}/exercises/${exerciseId}`, {
+            const res = await fetch(`${API_BASE_URL}/courses/${course.id}/exercises/${exerciseId}`, {
                 method: "DELETE",
                 headers: {
                     "Authorization": `Bearer ${token}`

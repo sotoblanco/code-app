@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Book, LayoutGrid, Trash2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { API_BASE_URL } from "../../config";
 
 interface Course {
     id: number;
@@ -19,7 +20,7 @@ export default function AdminDashboard() {
 
     const fetchCourses = async () => {
         try {
-            const res = await fetch("http://localhost:8000/courses/");
+            const res = await fetch(`${API_BASE_URL}/courses/`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setCourses(data);
@@ -36,7 +37,7 @@ export default function AdminDashboard() {
     const handleCreateCourse = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            const res = await fetch("http://localhost:8000/courses/", {
+            const res = await fetch(`${API_BASE_URL}/courses/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -63,7 +64,7 @@ export default function AdminDashboard() {
         if (!confirm("Are you sure you want to delete this course?")) return;
 
         try {
-            const res = await fetch(`http://localhost:8000/courses/${courseId}`, {
+            const res = await fetch(`${API_BASE_URL}/courses/${courseId}`, {
                 method: "DELETE",
                 headers: {
                     "Authorization": `Bearer ${token}`

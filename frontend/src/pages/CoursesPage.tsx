@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Terminal, ChevronRight, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE_URL } from "../config";
 
 interface Course {
     id: number;
@@ -19,7 +20,7 @@ export default function CoursesPage() {
     useEffect(() => {
         const fetchCourses = async () => {
             try {
-                const res = await fetch('http://localhost:8000/courses/');
+                const res = await fetch(`${API_BASE_URL}/courses/`);
                 if (res.ok) {
                     const data = await res.json();
                     setCourses(data);

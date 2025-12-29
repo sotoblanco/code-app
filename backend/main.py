@@ -105,9 +105,24 @@ def delete_exercise(
 
 @app.post("/run")
 def run_code(submission: CodeSubmission, user: User = Depends(get_current_user)):
-    # For now, we'll just run it in a container.
-    # Logic: Write code to temp file -> Mount to Docker -> Run
-    
+    # Logic: If running in Modal/Cloud, use Modal Sandbox. Else use Docker.
+    execution_env = os.environ.get("EXECUTION_ENV", "docker")
+
+    if execution_env == "modal":
+        try:
+            # Lazy import to avoid circular dependency
+            from modal_app import run_in_sandbox
+            
+            # Run remotely on Modal
+            # Since we are already in a Modal app, this triggers a sandbox creation
+            result = run_in_sandbox.remote(submission.code, submission.language)
+            return result
+        except ImportError:
+            raise HTTPException(status_code=500, detail="Modal backend not found")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+            
+    # Default: Use local Docker
     try:
         # Create a temp directory for the execution context
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -151,3 +166,22 @@ def run_code(submission: CodeSubmission, user: User = Depends(get_current_user))
         return {"stdout": "", "stderr": "Execution timed out", "exit_code": 124}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Static Files & SPA Routing ---
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+# Serve static assets (JS, CSS, images)
+# Check if /assets exists (it will in Modal, but maybe not locally without mount)
+if os.path.exists("/assets"):
+    app.mount("/assets", StaticFiles(directory="/assets/assets"), name="assets")
+    
+    # Catch-all for SPA routing (serving index.html)
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Allow API routes to pass through if they weren't caught above
+        if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+             raise HTTPException(status_code=404, detail="Not Found")
+             
+        # Serve index.html for any other route (React Router handles the rest)
+        return FileResponse("/assets/index.html")

@@ -1,4 +1,3 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import CodingPage from './pages/CodingPage';
 import CoursesPage from './pages/CoursesPage';

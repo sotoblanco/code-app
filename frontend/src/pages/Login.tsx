@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { KeyRound, User } from 'lucide-react';
+import { API_BASE_URL } from "../config";
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -17,7 +18,9 @@ export default function Login() {
         setError('');
 
         try {
-            const response = await fetch('http://localhost:8000/auth/login', {
+
+            // ... inside the component ...
+            const response = await fetch(`${API_BASE_URL}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: new URLSearchParams({

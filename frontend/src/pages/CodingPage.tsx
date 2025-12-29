@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MarkdownViewer from '../components/MarkdownViewer';
 import { CodeEditor } from '../components/CodeEditor';
 import { Play, RotateCw, ChevronLeft, ChevronRight, BookOpen, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import confetti from 'canvas-confetti';
+import { API_BASE_URL } from "../config";
 
 interface Exercise {
     id: number;
@@ -44,7 +45,7 @@ export default function CodingPage() {
             try {
                 // Default to course ID 1 if no ID provided (or handle "No courses" state)
                 const courseId = id || "1";
-                const res = await fetch(`http://localhost:8000/courses/${courseId}`);
+                const res = await fetch(`${API_BASE_URL}/courses/${courseId}`);
                 if (res.ok) {
                     const data = await res.json();
                     setCourse(data);
@@ -80,7 +81,7 @@ export default function CodingPage() {
         setOutput("Running...");
 
         try {
-            const response = await fetch('http://localhost:8000/run', {
+            const response = await fetch(`${API_BASE_URL}/run`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

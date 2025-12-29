@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, Code, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Code, Save, Trash2, Sparkles, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from "../../config";
+import { generateExercise } from '../../services/aiService';
 
 interface Exercise {
     id: number;
@@ -31,6 +32,9 @@ export default function CourseEditor() {
     const [newExDesc, setNewExDesc] = useState("# Instructions\n\nWrite a function...");
     const [newExCode, setNewExCode] = useState("def solution():\n    pass");
     const [newExTest, setNewExTest] = useState("def test_solution():\n    assert solution() is None");
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [showAiPrompt, setShowAiPrompt] = useState(false);
+    const [aiPrompt, setAiPrompt] = useState("");
     const { token } = useAuth();
 
     const fetchCourse = async () => {
@@ -100,6 +104,28 @@ export default function CourseEditor() {
         }
     }
 
+    const handleAiGenerate = async () => {
+        if (!aiPrompt.trim()) return;
+        setIsGenerating(true);
+        try {
+            const data = await generateExercise(aiPrompt);
+            if (data) {
+                setNewExTitle(data.title || "");
+                setNewExDesc(data.description || "");
+                setNewExCode(data.starting_code || "");
+                setNewExTest(data.test_cases || "");
+                // simple slug generation
+                setNewExSlug(data.title ? data.title.toLowerCase().replace(/ /g, "-") : "");
+                setShowAiPrompt(false);
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Failed to generate exercise");
+        } finally {
+            setIsGenerating(false);
+        }
+    }
+
     if (!course) return <div className="p-8 text-slate-400">Loading course...</div>;
 
     return (
@@ -147,9 +173,38 @@ export default function CourseEditor() {
 
                     {/* Right: Add Exercise Form */}
                     <div className="lg:col-span-2 bg-slate-900 rounded-xl border border-slate-800 p-6">
-                        <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                            <Plus size={20} className="text-blue-500" /> Add New Exercise
+                        <h2 className="text-xl font-semibold mb-6 flex items-center justify-between">
+                            <span className="flex items-center gap-2"><Plus size={20} className="text-blue-500" /> Add New Exercise</span>
+                            <button
+                                onClick={() => setShowAiPrompt(!showAiPrompt)}
+                                className="text-sm bg-purple-600 hover:bg-purple-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors"
+                            >
+                                <Sparkles size={16} /> Generate with AI
+                            </button>
                         </h2>
+
+                        {showAiPrompt && (
+                            <div className="mb-6 bg-slate-800 p-4 rounded-lg border border-purple-500/30">
+                                <label className="block text-sm font-medium text-purple-300 mb-2">Describe the exercise you want to create</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none"
+                                        placeholder="e.g. Write a function to check for palindromes..."
+                                        value={aiPrompt}
+                                        onChange={e => setAiPrompt(e.target.value)}
+                                        onKeyDown={e => e.key === 'Enter' && handleAiGenerate()}
+                                    />
+                                    <button
+                                        onClick={handleAiGenerate}
+                                        disabled={isGenerating}
+                                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                                    >
+                                        {isGenerating ? <Loader2 size={18} className="animate-spin" /> : 'Generate'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         <form onSubmit={handleAddExercise} className="space-y-6">
                             <div className="grid grid-cols-2 gap-4">

@@ -18,7 +18,7 @@ backend_path = os.path.dirname(__file__)
 
 app_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install("fastapi[all]", "sqlmodel", "uvicorn", "uv", "python-jose[cryptography]", "passlib[bcrypt]", "python-multipart")
+    .pip_install("fastapi[all]", "sqlmodel", "uvicorn", "uv", "python-jose[cryptography]", "passlib[bcrypt]", "python-multipart", "google-genai")
     .env({"EXECUTION_ENV": "modal"})
     .add_local_dir(web_dist_path, remote_path="/assets")
     .add_local_dir(backend_path, remote_path="/root")
@@ -76,7 +76,7 @@ volume = modal.Volume.from_name("code-app-volume", create_if_missing=True)
 
 @app.function(
     image=app_image, 
-    #secrets=[modal.Secret.from_name("code-app-secrets")],
+    secrets=[modal.Secret.from_name("code-app-secrets")],
     volumes={"/data": volume},
     # Set DATABASE_URL to verify we use the persistent volume
     timeout=600

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Book, LayoutGrid, Trash2 } from 'lucide-react';
+import { Plus, Book, LayoutGrid, Trash2, MessageSquare, X, Send, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from "../../config";
+import { discussImplementation } from '../../services/aiService';
 
 interface Course {
     id: number;
@@ -16,6 +17,13 @@ export default function AdminDashboard() {
     const [courses, setCourses] = useState<Course[]>([]);
     const [newCourseTitle, setNewCourseTitle] = useState("");
     const [newCourseSlug, setNewCourseSlug] = useState("");
+
+    // AI Discussion State
+    const [showChat, setShowChat] = useState(false);
+    const [chatMessage, setChatMessage] = useState("");
+    const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+    const [isChatLoading, setIsChatLoading] = useState(false);
+
     const { token } = useAuth();
 
     const fetchCourses = async () => {
@@ -161,6 +169,96 @@ export default function AdminDashboard() {
                         </div>
                     )}
                 </div>
+
+                {/* Floating Chat Button */}
+                <button
+                    onClick={() => setShowChat(true)}
+                    className="fixed bottom-8 right-8 bg-purple-600 hover:bg-purple-500 text-white p-4 rounded-full shadow-lg transition-transform hover:scale-110"
+                    title="Discuss Implementation Ideas"
+                >
+                    <MessageSquare size={24} />
+                </button>
+
+                {/* Chat Modal/Panel */}
+                {showChat && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-slate-900 w-full max-w-lg rounded-xl border border-slate-700 shadow-2xl flex flex-col max-h-[80vh]">
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-xl">
+                                <h3 className="font-semibold text-lg flex items-center gap-2">
+                                    <MessageSquare size={18} className="text-purple-400" />
+                                    Implementation Discussion
+                                </h3>
+                                <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                {chatHistory.length === 0 && (
+                                    <div className="text-center text-slate-500 py-8">
+                                        <p>Ask me anything about implementing your coding exercises!</p>
+                                    </div>
+                                )}
+                                {chatHistory.map((msg, idx) => (
+                                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user'
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-slate-800 text-slate-200 border border-slate-700'
+                                            }`}>
+                                            <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                {isChatLoading && (
+                                    <div className="flex justify-start">
+                                        <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                            <Loader2 size={16} className="animate-spin text-purple-400" />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-4 border-t border-slate-700 bg-slate-800 rounded-b-xl">
+                                <form
+                                    onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        if (!chatMessage.trim()) return;
+
+                                        const msg = chatMessage;
+                                        setChatMessage("");
+                                        setChatHistory(prev => [...prev, { role: 'user', text: msg }]);
+                                        setIsChatLoading(true);
+
+                                        try {
+                                            const res = await discussImplementation(msg);
+                                            setChatHistory(prev => [...prev, { role: 'ai', text: res.response }]);
+                                        } catch (err) {
+                                            console.error(err);
+                                            setChatHistory(prev => [...prev, { role: 'ai', text: "Sorry, I encountered an error." }]);
+                                        } finally {
+                                            setIsChatLoading(false);
+                                        }
+                                    }}
+                                    className="flex gap-2"
+                                >
+                                    <input
+                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none"
+                                        placeholder="Type your question..."
+                                        value={chatMessage}
+                                        onChange={e => setChatMessage(e.target.value)}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={isChatLoading || !chatMessage.trim()}
+                                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white p-2 rounded-lg transition-colors"
+                                    >
+                                        <Send size={20} />
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
             </div>
         </div>

@@ -11,6 +11,7 @@ import os
 from database import create_db_and_tables, get_session
 from models import Course, CourseCreate, CourseRead, Exercise, ExerciseCreate, ExerciseRead, User
 from auth import auth_router, get_current_user, get_current_admin
+from routers.ai import router as ai_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Coding Exercise App API", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(ai_router)
 
 # CORS Setup
 origins = [

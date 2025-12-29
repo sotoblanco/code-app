@@ -1,0 +1,39 @@
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      # Mount docker socket to allow spawning sibling containers for sandbox
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DATABASE_URL=sqlite:///database.db
+    # We need to make sure the image used by the backend exists.
+    # Ideally, we build it separately or use a multi-stage build, but for now
+    # the backend assumes 'sandbox-runner' exists on the host/context.
+    # Since we mount the docker socket, the backend container sees the host's images.
+    
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+# We can also define a service to strictly build the sandbox image ensuring it exists
+  sandbox-builder:
+    build:
+      context: ./sandbox
+    image: sandbox-runner
+    # This container executes immediately and exits
+    command: ["echo", "Sandbox image built"]

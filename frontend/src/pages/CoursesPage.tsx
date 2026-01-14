@@ -15,7 +15,7 @@ export default function CoursesPage() {
     const [courses, setCourses] = useState<Course[]>([]);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
-    const { logout } = useAuth();
+    const { logout, isAuthenticated } = useAuth();
 
     useEffect(() => {
         const fetchCourses = async () => {
@@ -45,13 +45,32 @@ export default function CoursesPage() {
                     </div>
                     <h1 className="font-bold text-xl tracking-tight">Code App</h1>
                 </div>
-                <button
-                    onClick={logout}
-                    className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
-                >
-                    <LogOut size={18} />
-                    <span className="text-sm font-medium">Sign Out</span>
-                </button>
+                <div className="flex items-center gap-3">
+                    {isAuthenticated ? (
+                        <button
+                            onClick={logout}
+                            className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
+                        >
+                            <LogOut size={18} />
+                            <span className="text-sm font-medium">Sign Out</span>
+                        </button>
+                    ) : (
+                        <div className="flex items-center gap-3 text-sm font-medium">
+                            <button
+                                onClick={() => navigate('/login')}
+                                className="text-slate-400 hover:text-white transition-colors"
+                            >
+                                Sign In
+                            </button>
+                            <button
+                                onClick={() => navigate('/signup')}
+                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors shadow-lg shadow-blue-500/20"
+                            >
+                                Get Started
+                            </button>
+                        </div>
+                    )}
+                </div>
             </header>
 
             {/* Main Content */}

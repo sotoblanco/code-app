@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, Code, Save, Trash2, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Code, Save, Trash2, Sparkles, Loader2, Eye } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from "../../config";
 import { generateExercise } from '../../services/aiService';
+import ExercisePreview from '../../components/ExercisePreview';
 
 interface Exercise {
     id: number;
@@ -12,6 +13,7 @@ interface Exercise {
     initial_code: string;
     test_code: string;
     slug: string;
+    language: string;
 }
 
 interface Course {
@@ -29,12 +31,18 @@ export default function CourseEditor() {
     // New Exercise Form State
     const [newExTitle, setNewExTitle] = useState("");
     const [newExSlug, setNewExSlug] = useState("");
-    const [newExDesc, setNewExDesc] = useState("# Instructions\n\nWrite a function...");
+
+    // Split Content State
+    const [explanationContent, setExplanationContent] = useState("# Explanation\n\nExplain the concept here...");
+    const [assignmentContent, setAssignmentContent] = useState("Write a function that...");
+
     const [newExCode, setNewExCode] = useState("def solution():\n    pass");
     const [newExTest, setNewExTest] = useState("def test_solution():\n    assert solution() is None");
     const [isGenerating, setIsGenerating] = useState(false);
     const [showAiPrompt, setShowAiPrompt] = useState(false);
     const [aiPrompt, setAiPrompt] = useState("");
+    const [selectedLanguage, setSelectedLanguage] = useState("python"); // New state for language
+    const [previewExercise, setPreviewExercise] = useState<Exercise | null>(null);
     const { token } = useAuth();
 
     const fetchCourse = async () => {
@@ -53,38 +61,38 @@ export default function CourseEditor() {
         if (id) fetchCourse();
     }, [id]);
 
-    const handleAddExercise = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!course) return;
+    // Edit Mode State & Handlers
+    const [editingExerciseId, setEditingExerciseId] = useState<number | null>(null);
 
-        try {
-            const res = await fetch(`${API_BASE_URL}/courses/${course.id}/exercises/`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    title: newExTitle,
-                    slug: newExSlug,
-                    description: newExDesc,
-                    initial_code: newExCode,
-                    test_code: newExTest,
-                    course_id: course.id
-                })
-            });
+    const handleEditExercise = (ex: Exercise) => {
+        setEditingExerciseId(ex.id);
+        setNewExTitle(ex.title);
+        setNewExSlug(ex.slug);
+        setNewExCode(ex.initial_code);
+        setNewExTest(ex.test_code);
+        setSelectedLanguage(ex.language || "python");
 
-            if (res.ok) {
-                // Clear form and refresh
-                setNewExTitle("");
-                setNewExSlug("");
-                fetchCourse();
-            }
-        } catch (err) {
-            console.error(err);
+        // Split description back into Explanation and Assignment
+        const parts = ex.description.split("\n\n## Assignment\n\n");
+        if (parts.length >= 2) {
+            setExplanationContent(parts[0]);
+            setAssignmentContent(parts.slice(1).join("\n\n## Assignment\n\n"));
+        } else {
+            setExplanationContent(ex.description);
+            setAssignmentContent("");
         }
     }
 
+    const cancelEdit = () => {
+        setEditingExerciseId(null);
+        setNewExTitle("");
+        setNewExSlug("");
+        setExplanationContent("# Explanation\n\nExplain the concept here...");
+        setAssignmentContent("Write a function that...");
+        setNewExCode("def solution():\n    pass");
+        setNewExTest("def test_solution():\n    assert solution() is None");
+        setSelectedLanguage("python");
+    }
 
     const handleDeleteExercise = async (exerciseId: number) => {
         if (!course || !confirm("Are you sure you want to delete this exercise?")) return;
@@ -98,9 +106,56 @@ export default function CourseEditor() {
             });
             if (res.ok) {
                 fetchCourse();
+            } else {
+                alert("Failed to delete exercise");
             }
         } catch (err) {
             console.error(err);
+        }
+    }
+
+    const handleSaveExercise = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!course) return;
+
+        // Combine Explanation and Assignment for storage
+        const fullDescription = `${explanationContent}\n\n## Assignment\n\n${assignmentContent}`;
+
+        try {
+            const url = editingExerciseId
+                ? `${API_BASE_URL}/courses/${course.id}/exercises/${editingExerciseId}`
+                : `${API_BASE_URL}/courses/${course.id}/exercises/`;
+
+            const method = editingExerciseId ? "PUT" : "POST";
+
+            const res = await fetch(url, {
+                method: method,
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    title: newExTitle,
+                    slug: newExSlug,
+                    description: fullDescription,
+                    initial_code: newExCode,
+                    test_code: newExTest,
+                    language: selectedLanguage, // Include language
+                    course_id: course.id
+                })
+            });
+
+            if (res.ok) {
+                // Clear form and refresh
+                cancelEdit();
+                fetchCourse();
+            } else {
+                const data = await res.json();
+                alert(`Failed to save: ${data.detail || "Unknown error"}`);
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Network error");
         }
     }
 
@@ -108,10 +163,13 @@ export default function CourseEditor() {
         if (!aiPrompt.trim()) return;
         setIsGenerating(true);
         try {
-            const data = await generateExercise(aiPrompt);
+            const data = await generateExercise(aiPrompt, selectedLanguage);
             if (data) {
                 setNewExTitle(data.title || "");
-                setNewExDesc(data.description || "");
+                // Populate separate fields
+                setExplanationContent(data.explanation || data.lesson || data.description || "");
+                setAssignmentContent(data.assignment || "");
+
                 setNewExCode(data.starting_code || "");
                 setNewExTest(data.test_cases || "");
                 // simple slug generation
@@ -155,6 +213,20 @@ export default function CourseEditor() {
                                         <p className="text-xs text-slate-500 font-mono mt-1">{ex.slug}</p>
                                     </div>
                                     <button
+                                        onClick={() => setPreviewExercise(ex)}
+                                        className="p-1.5 text-slate-500 hover:text-purple-400 opacity-0 group-hover:opacity-100 transition-all mr-1"
+                                        title="Preview Exercise"
+                                    >
+                                        <Eye size={16} />
+                                    </button>
+                                    <button
+                                        onClick={() => handleEditExercise(ex)}
+                                        className="p-1.5 text-slate-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all mr-1"
+                                        title="Edit Exercise"
+                                    >
+                                        <Sparkles size={16} />
+                                    </button>
+                                    <button
                                         onClick={() => handleDeleteExercise(ex.id)}
                                         className="p-1.5 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
                                         title="Delete Exercise"
@@ -186,27 +258,40 @@ export default function CourseEditor() {
                         {showAiPrompt && (
                             <div className="mb-6 bg-slate-800 p-4 rounded-lg border border-purple-500/30">
                                 <label className="block text-sm font-medium text-purple-300 mb-2">Describe the exercise you want to create</label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none"
-                                        placeholder="e.g. Write a function to check for palindromes..."
-                                        value={aiPrompt}
-                                        onChange={e => setAiPrompt(e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && handleAiGenerate()}
-                                    />
-                                    <button
-                                        onClick={handleAiGenerate}
-                                        disabled={isGenerating}
-                                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                                    >
-                                        {isGenerating ? <Loader2 size={18} className="animate-spin" /> : 'Generate'}
-                                    </button>
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none"
+                                            placeholder="e.g. Write a function to check for palindromes..."
+                                            value={aiPrompt}
+                                            onChange={e => setAiPrompt(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleAiGenerate()}
+                                        />
+                                        <select
+                                            value={selectedLanguage}
+                                            onChange={(e) => setSelectedLanguage(e.target.value)}
+                                            className="bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-purple-500 outline-none text-slate-300"
+                                        >
+                                            <option value="python">Python</option>
+                                            <option value="rust">Rust</option>
+                                            <option value="javascript">JavaScript</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex justify-end">
+                                        <button
+                                            onClick={handleAiGenerate}
+                                            disabled={isGenerating}
+                                            className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                                        >
+                                            {isGenerating ? <Loader2 size={18} className="animate-spin" /> : 'Generate Exercise'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}
 
-                        <form onSubmit={handleAddExercise} className="space-y-6">
+                        <form onSubmit={handleSaveExercise} className="space-y-6">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium text-slate-400 mb-1">Title</label>
@@ -216,6 +301,18 @@ export default function CourseEditor() {
                                     />
                                 </div>
                                 <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1">Language</label>
+                                    <select
+                                        value={selectedLanguage}
+                                        onChange={(e) => setSelectedLanguage(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none text-slate-300"
+                                    >
+                                        <option value="python">Python</option>
+                                        <option value="rust">Rust</option>
+                                        <option value="javascript">JavaScript</option>
+                                    </select>
+                                </div>
+                                <div className="col-span-2">
                                     <label className="block text-sm font-medium text-slate-400 mb-1">Slug</label>
                                     <input
                                         className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
@@ -224,12 +321,23 @@ export default function CourseEditor() {
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-medium text-slate-400 mb-1">Instructions (Markdown)</label>
-                                <textarea
-                                    className="w-full h-32 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
-                                    value={newExDesc} onChange={e => setNewExDesc(e.target.value)} required
-                                />
+                            <div className="grid grid-cols-1 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1">Explanation (Markdown)</label>
+                                    <textarea
+                                        className="w-full h-40 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
+                                        value={explanationContent} onChange={e => setExplanationContent(e.target.value)} required
+                                        placeholder="# Explanation..."
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-400 mb-1">Assignment Task (Markdown)</label>
+                                    <textarea
+                                        className="w-full h-32 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm"
+                                        value={assignmentContent} onChange={e => setAssignmentContent(e.target.value)} required
+                                        placeholder="Complete the task..."
+                                    />
+                                </div>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
@@ -251,13 +359,68 @@ export default function CourseEditor() {
 
                             <div className="flex justify-end pt-4 border-t border-slate-800">
                                 <button type="submit" className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors">
-                                    <Save size={18} /> Save Exercise
+                                    <Save size={18} /> {editingExerciseId ? 'Update Exercise' : 'Save Exercise'}
                                 </button>
+                                {editingExerciseId && (
+                                    <button
+                                        type="button"
+                                        onClick={cancelEdit}
+                                        className="ml-4 text-slate-400 hover:text-white"
+                                    >
+                                        Cancel
+                                    </button>
+                                )}
                             </div>
                         </form>
                     </div>
 
                 </div>
+
+                {/* Exercise Preview Modal */}
+                {previewExercise && (
+                    <ExercisePreview
+                        title={previewExercise.title}
+                        description={previewExercise.description}
+                        initialCode={previewExercise.initial_code}
+                        testCode={previewExercise.test_code}
+                        language={previewExercise.language || 'python'}
+                        onClose={() => setPreviewExercise(null)}
+                        onSave={async (data) => {
+                            // Update the exercise via API
+                            try {
+                                const res = await fetch(
+                                    `${API_BASE_URL}/courses/${course?.id}/exercises/${previewExercise.id}`,
+                                    {
+                                        method: 'PUT',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'Authorization': `Bearer ${token}`
+                                        },
+                                        body: JSON.stringify({
+                                            title: previewExercise.title,
+                                            slug: previewExercise.slug,
+                                            description: data.description,
+                                            initial_code: data.initialCode,
+                                            test_code: data.testCode,
+                                            language: previewExercise.language || 'python',
+                                            course_id: course?.id
+                                        })
+                                    }
+                                );
+                                if (res.ok) {
+                                    fetchCourse(); // Refresh the course data
+                                    setPreviewExercise(null);
+                                } else {
+                                    const errorData = await res.json();
+                                    alert(`Failed to save: ${errorData.detail || 'Unknown error'}`);
+                                }
+                            } catch (err) {
+                                console.error(err);
+                                alert('Network error while saving');
+                            }
+                        }}
+                    />
+                )}
             </div>
         </div>
     );

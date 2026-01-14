@@ -42,8 +42,11 @@ export default function AdminDashboard() {
         fetchCourses();
     }, []);
 
+    const [isCreating, setIsCreating] = useState(false);
+
     const handleCreateCourse = async (e: React.FormEvent) => {
         e.preventDefault();
+        setIsCreating(true);
         try {
             const res = await fetch(`${API_BASE_URL}/courses/`, {
                 method: "POST",
@@ -62,9 +65,16 @@ export default function AdminDashboard() {
                 setNewCourseTitle("");
                 setNewCourseSlug("");
                 fetchCourses();
+                alert("Course created successfully!");
+            } else {
+                const data = await res.json();
+                alert(`Failed to create course: ${data.detail || "Unknown error"}`);
             }
         } catch (err) {
             console.error("Failed to create course", err);
+            alert("Network error. Check console.");
+        } finally {
+            setIsCreating(false);
         }
     }
 
@@ -80,9 +90,13 @@ export default function AdminDashboard() {
             });
             if (res.ok) {
                 fetchCourses();
+            } else {
+                const data = await res.json();
+                alert(`Failed to delete: ${data.detail || res.statusText}`);
             }
         } catch (err) {
             console.error("Failed to delete course", err);
+            alert("Network error. Check console.");
         }
     }
 
@@ -127,8 +141,13 @@ export default function AdminDashboard() {
                                 placeholder="e.g. advanced-python"
                             />
                         </div>
-                        <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-colors">
-                            Create
+                        <button
+                            type="submit"
+                            disabled={isCreating}
+                            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+                        >
+                            {isCreating && <Loader2 size={16} className="animate-spin" />}
+                            {isCreating ? "Creating..." : "Create"}
                         </button>
                     </form>
                 </div>

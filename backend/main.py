@@ -9,8 +9,8 @@ import tempfile
 import os
 
 from database import create_db_and_tables, get_session
-from models import Course, CourseCreate, CourseRead, Exercise, ExerciseCreate, ExerciseRead, User
-from auth import auth_router, get_current_user, get_current_admin
+from models import Course, CourseCreate, CourseRead, Exercise, ExerciseCreate, ExerciseRead, ExerciseUpdate, User
+from auth import auth_router, get_current_user, get_current_admin, get_optional_user
 from routers.ai import router as ai_router
 
 @asynccontextmanager
@@ -105,8 +105,29 @@ def delete_exercise(
     session.commit()
     return None
 
+@app.put("/courses/{course_id}/exercises/{exercise_id}", response_model=ExerciseRead)
+def update_exercise(
+    course_id: int, 
+    exercise_id: int, 
+    exercise_update: ExerciseUpdate, 
+    session: Session = Depends(get_session), 
+    admin: User = Depends(get_current_admin)
+):
+    db_exercise = session.get(Exercise, exercise_id)
+    if not db_exercise or db_exercise.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    
+    exercise_data = exercise_update.dict(exclude_unset=True)
+    for key, value in exercise_data.items():
+        setattr(db_exercise, key, value)
+        
+    session.add(db_exercise)
+    session.commit()
+    session.refresh(db_exercise)
+    return db_exercise
+
 @app.post("/run")
-def run_code(submission: CodeSubmission, user: User = Depends(get_current_user)):
+def run_code(submission: CodeSubmission, user: User = Depends(get_optional_user)):
     # Logic: If running in Modal/Cloud, use Modal Sandbox. Else use Docker.
     execution_env = os.environ.get("EXECUTION_ENV", "docker")
 

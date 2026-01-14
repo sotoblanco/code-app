@@ -103,6 +103,12 @@ export default function Login() {
                         Sign up
                     </Link>
                 </p>
+
+                <div className="mt-8 pt-6 border-t border-slate-800 text-center">
+                    <Link to="/" className="text-slate-500 hover:text-slate-300 text-sm transition-colors">
+                        Continue as Guest
+                    </Link>
+                </div>
             </div>
         </div>
     );

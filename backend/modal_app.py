@@ -89,3 +89,12 @@ def fastapi_app():
         
     from main import app as web_app
     return web_app
+
+@app.function(
+    image=app_image,
+    volumes={"/data": volume},
+)
+def migrate_db():
+    from migrate_db import migrate
+    migrate()
+

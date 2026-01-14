@@ -1,14 +1,18 @@
 import { API_BASE_URL } from '../config';
 
-export const generateExercise = async (prompt: string) => {
+export const generateExercise = async (prompt: string, language: string = 'python') => {
     const token = localStorage.getItem('token');
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/ai/generate/exercise`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ prompt }),
+        headers,
+        body: JSON.stringify({ prompt, language }),
     });
 
     if (!response.ok) {
@@ -21,12 +25,16 @@ export const generateExercise = async (prompt: string) => {
 
 export const discussImplementation = async (message: string, context?: string) => {
     const token = localStorage.getItem('token');
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/ai/discuss`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ message, context }),
     });
 

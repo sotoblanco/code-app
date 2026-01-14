@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MarkdownViewer from '../components/MarkdownViewer';
 import { CodeEditor } from '../components/CodeEditor';
+import AIChatPanel from '../components/AIChatPanel';
 import { Play, RotateCw, ChevronLeft, ChevronRight, BookOpen, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import confetti from 'canvas-confetti';
 import { API_BASE_URL } from "../config";
+import { Panel, Group, Separator } from "react-resizable-panels";
 
 interface Exercise {
     id: number;
@@ -14,6 +16,7 @@ interface Exercise {
     initial_code: string;
     test_code: string;
     slug: string;
+    language: string;
 }
 
 interface Course {
@@ -27,17 +30,14 @@ export default function CodingPage() {
     const navigate = useNavigate();
     const [course, setCourse] = useState<Course | null>(null);
     const [currentExerciseIndex, setCurrentExerciseIndex] = useState(0);
+    const [editorTab, setEditorTab] = useState<'main' | 'tests'>('main');
 
     const [code, setCode] = useState<string>("");
     const [output, setOutput] = useState<string>("");
     const [isRunning, setIsRunning] = useState(false);
     const { token, logout, isAuthenticated } = useAuth();
 
-    useEffect(() => {
-        if (!isAuthenticated) {
-            navigate('/login');
-        }
-    }, [isAuthenticated, navigate]);
+
 
     // Fetch Course Data
     useEffect(() => {
@@ -71,6 +71,8 @@ export default function CodingPage() {
         if (exercise) {
             setCode(exercise.initial_code);
             setOutput("");
+            // Reset to main tab on new exercise
+            setEditorTab('main');
         }
     }, [exercise]);
 
@@ -80,15 +82,20 @@ export default function CodingPage() {
         setIsRunning(true);
         setOutput("Running...");
 
+        const headers: HeadersInit = {
+            'Content-Type': 'application/json',
+        };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         try {
             const response = await fetch(`${API_BASE_URL}/run`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
+                headers,
                 body: JSON.stringify({
-                    code: code + "\n\n" + exercise.test_code
+                    code: code + "\n\n" + exercise.test_code,
+                    language: exercise.language || "python"
                 })
             });
 
@@ -136,9 +143,12 @@ export default function CodingPage() {
         );
     }
 
+    const currentLang = exercise?.language || "python";
+    const mainFilename = currentLang === "rust" ? "main.rs" : "main.py";
+    const testsFilename = currentLang === "rust" ? "tests.rs" : "tests.py";
+
     return (
         <div className="flex h-screen w-full bg-slate-950 text-slate-100 overflow-hidden font-sans">
-
             {/* Sidebar  */}
             <div className="w-16 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-4 gap-4">
                 <div
@@ -173,7 +183,9 @@ export default function CodingPage() {
                 <header className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6">
                     <div className="flex items-center gap-4">
                         <h1 className="font-semibold text-lg tracking-tight text-white">{exercise?.title}</h1>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">Python</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                            {currentLang === 'rust' ? 'Rust' : 'Python'}
+                        </span>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -195,74 +207,144 @@ export default function CodingPage() {
                             <ChevronRight size={20} />
                         </button>
                         <div className="w-px h-6 bg-slate-800 mx-2" />
-                        <button
-                            onClick={logout}
-                            className="p-2 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
-                            title="Sign Out"
-                        >
-                            <LogOut size={20} />
-                        </button>
+                        {isAuthenticated ? (
+                            <button
+                                onClick={logout}
+                                className="p-2 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
+                                title="Sign Out"
+                            >
+                                <LogOut size={20} />
+                            </button>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => navigate('/login')}
+                                    className="text-sm text-slate-400 hover:text-white font-medium transition-colors"
+                                >
+                                    Sign In
+                                </button>
+                                <button
+                                    onClick={() => navigate('/signup')}
+                                    className="text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors"
+                                >
+                                    Join
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </header>
 
                 {/* Split View */}
                 <div className="flex-1 flex overflow-hidden">
+                    <Group orientation="horizontal" id="main-group" style={{ height: '100%', width: '100%' }}>
+                        {/* Left: Instructions & AI */}
+                        <Panel defaultSize={40} minSize={20} id="left-panel" className="flex flex-col bg-slate-950/50">
+                            <Group orientation="vertical" id="left-group" style={{ height: '100%' }}>
+                                {/* Instructions */}
+                                <Panel defaultSize={60} minSize={20} id="instructions-panel" className="flex flex-col border-r border-slate-800 overflow-hidden">
+                                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                        {exercise && <MarkdownViewer content={exercise.description} />}
+                                    </div>
+                                </Panel>
 
-                    {/* Left: Instructions */}
-                    <div className="w-1/2 flex flex-col border-r border-slate-800 bg-slate-950/50">
-                        <div className="flex-1 overflow-y-auto custom-scrollbar">
-                            {exercise && <MarkdownViewer content={exercise.description} />}
-                        </div>
-                    </div>
+                                <Separator className="h-1.5 bg-slate-900 border-t border-slate-800 hover:bg-blue-500 transition-colors cursor-row-resize flex items-center justify-center z-10" />
 
-                    {/* Right: Code & Output */}
-                    <div className="w-1/2 flex flex-col bg-[#1e1e1e]">
-                        {/* Editor Toolbar */}
-                        <div className="h-10 border-b border-[#333] flex items-center px-4 justify-between bg-[#252526]">
-                            <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <span className="flex items-center gap-1.5 px-3 py-1 bg-[#1e1e1e] rounded text-slate-200 border border-[#333]">
-                                    📄 main.py
-                                </span>
-                            </div>
-                        </div>
+                                {/* AI Assistant */}
+                                <Panel defaultSize={40} minSize={20} id="ai-panel" className="flex flex-col border-r border-slate-800">
+                                    <AIChatPanel
+                                        context={`Current Exercise: ${exercise?.title}\nDescription: ${exercise?.description}\nCurrent Code:\n${code}`}
+                                    />
+                                </Panel>
+                            </Group>
+                        </Panel>
 
-                        {/* Editor */}
-                        <div className="flex-1 min-h-0">
-                            <CodeEditor
-                                code={code}
-                                onChange={(val) => setCode(val || "")}
-                                language="python"
-                            />
-                        </div>
+                        <Separator className="w-1.5 bg-slate-900 border-l border-slate-800 hover:bg-blue-500 transition-colors cursor-col-resize flex items-center justify-center z-10" />
 
-                        {/* Output / Console Panel */}
-                        <div className="h-1/3 border-t border-[#333] flex flex-col bg-[#1e1e1e]">
-                            <div className="h-10 flex items-center justify-between px-4 border-b border-[#333] bg-[#252526]">
-                                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Console Output</span>
+                        {/* Right: Code & Output */}
+                        <Panel defaultSize={50} minSize={20} id="code-output-panel" className="flex flex-col bg-[#1e1e1e]">
+                            <Group orientation="vertical" id="editor-group" style={{ height: '100%', width: '100%' }}>
+                                {/* Editor */}
+                                <Panel defaultSize={70} minSize={20} id="editor-panel" className="flex flex-col">
+                                    {/* Editor Toolbar */}
+                                    <div className="h-10 border-b border-[#333] flex items-center px-4 justify-between bg-[#252526]">
+                                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                                            <button
+                                                onClick={() => setEditorTab('main')}
+                                                className={`flex items-center gap-1.5 px-3 py-1 rounded border transition-colors ${editorTab === 'main'
+                                                    ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
+                                                    : 'border-transparent hover:bg-[#2d2d2d]'
+                                                    }`}
+                                            >
+                                                📄 {mainFilename}
+                                            </button>
+                                            <button
+                                                onClick={() => setEditorTab('tests')}
+                                                className={`flex items-center gap-1.5 px-3 py-1 rounded border transition-colors ${editorTab === 'tests'
+                                                    ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
+                                                    : 'border-transparent hover:bg-[#2d2d2d]'
+                                                    }`}
+                                            >
+                                                🧪 {testsFilename}
+                                            </button>
+                                        </div>
+                                    </div>
 
-                                <div className="flex gap-2">
-                                    <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium rounded transition-colors">
-                                        <RotateCw size={14} /> Reset
-                                    </button>
-                                    <button
-                                        onClick={handleRun}
-                                        disabled={isRunning}
-                                        className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow shadow-blue-900/20 transition-all disabled:opacity-50"
-                                    >
-                                        <Play size={14} fill="currentColor" /> {isRunning ? 'Running...' : 'Run Code'}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="flex-1 p-4 font-mono text-sm overflow-auto custom-scrollbar">
-                                {output ? (
-                                    <pre className="text-slate-300 whitespace-pre-wrap">{output}</pre>
-                                ) : (
-                                    <span className="text-slate-600 italic">Run your code to see output...</span>
-                                )}
-                            </div>
-                        </div>
-                    </div>
+                                    {/* Editor Area */}
+                                    <div className="flex-1 min-h-0 relative">
+                                        <div className="absolute inset-0" style={{ display: editorTab === 'main' ? 'block' : 'none' }}>
+                                            <CodeEditor
+                                                key="editor-main"
+                                                code={code}
+                                                onChange={(val) => setCode(val || "")}
+                                                language={currentLang}
+                                                filename={mainFilename}
+                                            />
+                                        </div>
+                                        <div className="absolute inset-0" style={{ display: editorTab === 'tests' ? 'block' : 'none' }}>
+                                            <CodeEditor
+                                                key="editor-tests"
+                                                code={exercise?.test_code || ""}
+                                                onChange={() => { }}
+                                                readOnly={true}
+                                                language={currentLang}
+                                                filename={testsFilename}
+                                            />
+                                        </div>
+                                    </div>
+                                </Panel>
 
+                                <Separator className="h-1.5 bg-[#252526] border-t border-[#333] hover:bg-blue-500 transition-colors cursor-row-resize flex items-center justify-center z-10" />
+
+                                {/* Output / Console Panel */}
+                                <Panel defaultSize={30} minSize={10} id="console-panel" className="flex flex-col bg-[#1e1e1e]">
+                                    <div className="h-10 flex items-center justify-between px-4 border-b border-[#333] bg-[#252526]">
+                                        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Console Output</span>
+
+                                        <div className="flex gap-2">
+                                            <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium rounded transition-colors">
+                                                <RotateCw size={14} /> Reset
+                                            </button>
+                                            <button
+                                                onClick={handleRun}
+                                                disabled={isRunning}
+                                                className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded shadow shadow-blue-900/20 transition-all disabled:opacity-50"
+                                            >
+                                                <Play size={14} fill="currentColor" /> {isRunning ? 'Running...' : 'Run Code'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 p-4 font-mono text-sm overflow-auto custom-scrollbar">
+                                        {output ? (
+                                            <pre className="text-slate-300 whitespace-pre-wrap">{output}</pre>
+                                        ) : (
+                                            <span className="text-slate-600 italic">Run your code to see output...</span>
+                                        )}
+                                    </div>
+                                </Panel>
+                            </Group>
+                        </Panel>
+
+                    </Group>
                 </div>
             </div>
         </div>

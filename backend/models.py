@@ -39,6 +39,7 @@ class ExerciseBase(SQLModel):
     title: str
     slug: str = Field(index=True)
     description: str  # Markdown content
+    language: str = Field(default="python")
     initial_code: str
     test_code: str
     order: int = 0
@@ -57,6 +58,16 @@ class CourseRead(CourseBase):
 
 class ExerciseCreate(ExerciseBase):
     pass
+
+class ExerciseUpdate(SQLModel):
+    title: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    language: Optional[str] = None
+    initial_code: Optional[str] = None
+    test_code: Optional[str] = None
+    order: Optional[int] = None
+    course_id: Optional[int] = None
 
 class ExerciseRead(ExerciseBase):
     id: int

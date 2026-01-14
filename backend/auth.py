@@ -65,6 +65,28 @@ async def get_current_user(token: str = Depends(oauth2_scheme), session: Session
         raise credentials_exception
     return user
 
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
+
+async def get_optional_user(token: str = Depends(oauth2_scheme_optional), session: Session = Depends(get_session)) -> Optional[User]:
+    """
+    Returns the user if authenticated, None otherwise.
+    Does not raise HTTPException for missing/invalid tokens.
+    """
+    if not token:
+        return None
+        
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+        token_data = TokenData(username=username, role=payload.get("role"))
+    except JWTError:
+        return None
+    
+    user = session.exec(select(User).where(User.username == token_data.username)).first()
+    return user
+
 async def get_current_admin(user: User = Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(

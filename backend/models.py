@@ -43,6 +43,7 @@ class ExerciseBase(SQLModel):
     initial_code: str
     test_code: str
     order: int = 0
+    passing_rule: str = Field(default="tests_pass")  # "tests_pass", "ai_eval", "manual"
     course_id: Optional[int] = Field(default=None, foreign_key="course.id")
 
 class Exercise(ExerciseBase, table=True):
@@ -67,6 +68,7 @@ class ExerciseUpdate(SQLModel):
     initial_code: Optional[str] = None
     test_code: Optional[str] = None
     order: Optional[int] = None
+    passing_rule: Optional[str] = None
     course_id: Optional[int] = None
 
 class ExerciseRead(ExerciseBase):

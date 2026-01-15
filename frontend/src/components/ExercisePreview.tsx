@@ -13,7 +13,8 @@ interface ExercisePreviewProps {
     initialCode: string;
     testCode: string;
     language: string;
-    onSave?: (data: { description: string; initialCode: string; testCode: string }) => void;
+    passingRule?: string; // New prop
+    onSave?: (data: { description: string; initialCode: string; testCode: string; passingRule: string }) => void;
     onClose?: () => void;
 }
 
@@ -23,6 +24,7 @@ export default function ExercisePreview({
     initialCode,
     testCode,
     language,
+    passingRule = "tests_pass",
     onSave,
     onClose
 }: ExercisePreviewProps) {
@@ -30,6 +32,7 @@ export default function ExercisePreview({
     const [editedDescription, setEditedDescription] = useState(description);
     const [editedCode, setEditedCode] = useState(initialCode);
     const [editedTestCode, setEditedTestCode] = useState(testCode);
+    const [editedPassingRule, setEditedPassingRule] = useState(passingRule);
     const [editorTab, setEditorTab] = useState<'main' | 'tests'>('main');
 
     // Code execution state
@@ -46,7 +49,8 @@ export default function ExercisePreview({
             onSave({
                 description: editedDescription,
                 initialCode: editedCode,
-                testCode: editedTestCode
+                testCode: editedTestCode,
+                passingRule: editedPassingRule
             });
         }
         setIsEditing(false);
@@ -56,6 +60,7 @@ export default function ExercisePreview({
         setEditedDescription(description);
         setEditedCode(initialCode);
         setEditedTestCode(testCode);
+        setEditedPassingRule(passingRule);
         setIsEditing(false);
     };
 
@@ -125,6 +130,15 @@ export default function ExercisePreview({
                     <div className="flex items-center gap-2">
                         {isEditing ? (
                             <>
+                                <select
+                                    value={editedPassingRule}
+                                    onChange={(e) => setEditedPassingRule(e.target.value)}
+                                    className="bg-slate-900 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 mr-2"
+                                >
+                                    <option value="tests_pass">Tests Pass</option>
+                                    <option value="ai_eval">AI Evaluation</option>
+                                    <option value="manual">Manual Approval</option>
+                                </select>
                                 <button
                                     onClick={handleCancel}
                                     className="px-3 py-1.5 text-sm text-slate-400 hover:text-white transition-colors"
@@ -206,8 +220,8 @@ export default function ExercisePreview({
                                             <button
                                                 onClick={() => setEditorTab('main')}
                                                 className={`flex items-center gap-1.5 px-3 py-1 rounded border transition-colors ${editorTab === 'main'
-                                                        ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
-                                                        : 'border-transparent hover:bg-[#2d2d2d]'
+                                                    ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
+                                                    : 'border-transparent hover:bg-[#2d2d2d]'
                                                     }`}
                                             >
                                                 📄 {mainFilename}
@@ -215,8 +229,8 @@ export default function ExercisePreview({
                                             <button
                                                 onClick={() => setEditorTab('tests')}
                                                 className={`flex items-center gap-1.5 px-3 py-1 rounded border transition-colors ${editorTab === 'tests'
-                                                        ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
-                                                        : 'border-transparent hover:bg-[#2d2d2d]'
+                                                    ? 'bg-[#1e1e1e] text-slate-200 border-[#333]'
+                                                    : 'border-transparent hover:bg-[#2d2d2d]'
                                                     }`}
                                             >
                                                 🧪 {testsFilename}

@@ -24,7 +24,17 @@ def migrate():
             conn.commit()
             print("Migration successful: Added 'language' column.")
         else:
-            print("'language' column already exists. No migration needed.")
+            print("'language' column already exists.")
+
+        if "passing_rule" not in columns:
+            print("Adding 'passing_rule' column to 'exercise' table...")
+            cursor.execute("ALTER TABLE exercise ADD COLUMN passing_rule VARCHAR DEFAULT 'tests_pass'")
+            conn.commit()
+            print("Migration successful: Added 'passing_rule' column.")
+        else:
+            print("'passing_rule' column already exists.")
+            
+        print("Migration complete.")
             
     except Exception as e:
         print(f"Migration failed: {e}")

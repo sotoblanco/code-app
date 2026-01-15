@@ -41,3 +41,56 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+/* Interactive Markdown Checkboxes */
+.interactive-markdown li:has(.interactive-checkbox:checked) {
+  text-decoration: line-through;
+  color: #64748b;
+  /* slate-500 */
+  transition: all 0.2s ease;
+}
+
+.interactive-markdown input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  height: 1.1em;
+  border: 2px solid #475569;
+  border-radius: 4px;
+  background-color: transparent;
+  cursor: pointer;
+  vertical-align: middle;
+  margin-right: 0.5em;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.interactive-markdown input[type="checkbox"]:checked {
+  background-color: #3b82f6;
+  /* blue-500 */
+  border-color: #3b82f6;
+}
+
+.interactive-markdown input[type="checkbox"]:checked::after {
+  content: '';
+  display: block;
+  width: 0.35em;
+  height: 0.65em;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  position: absolute;
+  top: 0.05em;
+}
+
+.interactive-markdown li {
+  list-style: none;
+  /* Remove default bullets when checkboxes are present might be tricky if mixed, but usually handled by gfm */
+}
+
+.interactive-markdown ul:has(input[type="checkbox"]) {
+  padding-left: 0;
+}

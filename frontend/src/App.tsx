@@ -18,6 +18,7 @@ function App() {
           <Route path="/" element={<CoursesPage />} />
           <Route path="/course/:id" element={<CodingPage />} />
           <Route path="/file-course/:slug" element={<FileCourseRouter />} />
+          <Route path="/file-course/:slug/:lessonSlug" element={<FileCourseRouter />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/courses/:id" element={<CourseEditor />} />
         </Routes>

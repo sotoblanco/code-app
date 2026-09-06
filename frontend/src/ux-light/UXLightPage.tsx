@@ -15,7 +15,8 @@ import { DrawingPane } from './components/DrawingPane';
 import { SpreadsheetPane } from './components/SpreadsheetPane';
 import { ShareAchievement } from './components/ShareAchievement';
 import { groupLessonsIntoChapters, flattenLessons } from './courseLoader';
-import { emitLearnerEvent } from '../services/profileService';
+import { emitLearnerEvent, fetchMyProgress } from '../services/profileService';
+import { findLessonPosition, useLessonUrlSync } from '../lessonUrl';
 import type {
   FileCourse,
   FileLesson,
@@ -38,7 +39,7 @@ import { fetchSolutionCode } from '../solutionApi';
 import { isAuthorRole } from '../testVisibility';
 
 export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void }) {
-  const { slug } = useParams<{ slug: string }>();
+  const { slug, lessonSlug } = useParams<{ slug: string; lessonSlug?: string }>();
   const navigate = useNavigate();
   const { token, isAuthenticated, logout, user } = useAuth();
 
@@ -95,9 +96,12 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
     const fetchCourse = async () => {
       setCourseError(null);
       try {
-        const res = await fetch(`${API_BASE_URL}/file-courses/${slug}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const [res, progress] = await Promise.all([
+          fetch(`${API_BASE_URL}/file-courses/${slug}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          }),
+          fetchMyProgress(),
+        ]);
         if (res.status === 401) {
           logout();
           setIsAuthModalOpen(true);
@@ -106,8 +110,25 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
         }
         if (res.ok) {
           const data: FileCourse = await res.json();
+          const grouped = groupLessonsIntoChapters(data.lessons);
           setCourse(data);
-          setChapters(groupLessonsIntoChapters(data.lessons));
+          setChapters(grouped);
+
+          const courseProgress = progress.find((p) => p.course_slug === slug);
+          const knownSlugs = new Set(grouped.flatMap((ch) => ch.lessons.map((l) => l.slug)));
+          setCompletedIds(
+            new Set((courseProgress?.completed_lessons ?? []).filter((s) => knownSlugs.has(s)))
+          );
+          setTotalXp(courseProgress?.xp ?? 0);
+
+          // Prefer the lesson named in the URL, else the learner's last lesson, else lesson 1.
+          const target =
+            findLessonPosition(grouped, lessonSlug) ??
+            findLessonPosition(grouped, courseProgress?.resume_lesson ?? null);
+          if (target) {
+            setCurrentChapterIndex(target.chapterIndex);
+            setCurrentLessonIndex(target.lessonIndex);
+          }
         } else {
           setCourseError(res.status === 404 ? 'Course not found.' : 'Unable to load this course.');
         }
@@ -216,6 +237,18 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
     setOutputs((prev) => [...prev, { ...msg, id: `${Date.now()}-${Math.random()}`, timestamp: Date.now() }]);
   };
 
+  const recordLessonPass = (modality: 'code' | 'spreadsheet' | 'drawing') => {
+    if (!lesson || !slug) return;
+    if (completedIds.has(lesson.slug)) return; // persist only the first completion
+    const earned = Math.max(5, 35 - xpPenalty);
+    emitLearnerEvent('lesson_passed', {
+      course_slug: slug,
+      lesson_slug: lesson.slug,
+      modality,
+      xp: earned,
+    });
+  };
+
   const handleRunCode = async (customCommand?: string, isSubmit = false) => {
     if (!lesson) return;
     const codeToRun = customCommand || code;
@@ -268,8 +301,10 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
       }
 
       if (isSubmit) {
-        if (data.exit_code === 0) triggerSuccess(data.stdout || 'All tests passed.');
-        else triggerFailure(data.stderr || data.stdout || `Exited with code ${data.exit_code}`);
+        if (data.exit_code === 0) {
+          recordLessonPass('code');
+          triggerSuccess(data.stdout || 'All tests passed.');
+        } else triggerFailure(data.stderr || data.stdout || `Exited with code ${data.exit_code}`);
       }
     } catch {
       pushOutput({ type: 'error', text: 'Failed to connect to execution server.' });
@@ -332,7 +367,7 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ image_data: imageData }),
+        body: JSON.stringify({ image_data: imageData, xp: Math.max(5, 35 - xpPenalty) }),
       });
       if (response.status === 401) {
         logout();
@@ -377,7 +412,7 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ sheet_id: sheetUrl }),
+          body: JSON.stringify({ sheet_id: sheetUrl, xp: Math.max(5, 35 - xpPenalty) }),
         }
       );
       if (response.status === 401) {
@@ -419,6 +454,14 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  useLessonUrlSync({
+    courseSlug: slug,
+    chapters,
+    currentChapterIndex,
+    currentLessonIndex,
+    onSelectLesson: handleSelectLesson,
+  });
 
   if (!isAuthenticated || !course || chapters.length === 0 || !lesson) {
     return (
@@ -497,7 +540,10 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
         isVerifying={isVerifyingSheet}
         verification={sheetVerification}
         verifyError={sheetVerifyError}
-        onMarkComplete={() => triggerSuccess('Spreadsheet lesson marked complete.')}
+        onMarkComplete={() => {
+          recordLessonPass('spreadsheet');
+          triggerSuccess('Spreadsheet lesson marked complete.');
+        }}
         isComplete={completedIds.has(lesson.slug)}
       />
     ) : (

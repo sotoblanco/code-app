@@ -104,6 +104,34 @@ export const emitLearnerEvent = async (
   }
 };
 
+export interface CourseProgressSummary {
+  course_slug: string;
+  resume_lesson: string | null;
+  resume_order: number | null;
+  resume_title: string | null;
+  completed_lessons: string[];
+  completed: boolean;
+  done_count: number;
+  xp: number;
+  lesson_count: number | null;
+}
+
+export const fetchMyProgress = async (): Promise<CourseProgressSummary[]> => {
+  const token = localStorage.getItem('token');
+  if (!token) return [];
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/me/progress`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data?.courses) ? data.courses : [];
+  } catch {
+    return [];
+  }
+};
+
 export interface LearnerQuestionnaire {
   intake_preference?: 'diagram' | 'table' | 'hands_on' | 'story';
   explanation_length?: 'short' | 'thorough';

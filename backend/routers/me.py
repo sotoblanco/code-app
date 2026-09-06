@@ -19,6 +19,7 @@ from learner_profile import (
     LearnerQuestionnaire,
     apply_questionnaire_profile,
     get_or_create_profile,
+    get_user_progress,
     record_learner_event,
     update_profile_markdown,
 )
@@ -43,6 +44,28 @@ class ProfileEventRequest(BaseModel):
 class ProfileEventResponse(BaseModel):
     success: bool
     profile: dict[str, Any]
+
+
+class CourseProgress(BaseModel):
+    course_slug: str
+    resume_lesson: str | None = None
+    resume_order: int | None = None
+    resume_title: str | None = None
+    completed_lessons: list[str] = Field(default_factory=list)
+    completed: bool = False
+    done_count: int = 0
+    xp: int = 0
+    lesson_count: int | None = None
+
+
+class ProgressResponse(BaseModel):
+    courses: list[CourseProgress]
+
+
+@router.get("/progress", response_model=ProgressResponse)
+def get_my_progress(user: User = Depends(get_current_user)):
+    """Return per-course progress for the authenticated user (resume + completions)."""
+    return ProgressResponse(courses=get_user_progress(user.username))
 
 
 @router.get("/learning-profile", response_model=LearningProfileResponse)

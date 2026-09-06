@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -284,6 +285,159 @@ def update_profile_markdown(
     return get_or_create_profile(username, base_dir)
 
 
+@dataclass
+class CourseTaken:
+    """Structured view of a single 'Courses taken' bullet in LEARNING.md."""
+
+    course_slug: str
+    last_lesson: str | None = None
+    done: list[str] = field(default_factory=list)
+    xp: int = 0
+    total: int | None = None
+    completed: bool = False
+
+
+# Canonical bullet format (human readable + parseable):
+#   - **{course}** — in progress (2/6). Last: chapter1--lesson03. Done: a, b. XP: 60.
+_COURSE_TAKEN_RE = re.compile(
+    r"^-\s*\*\*(?P<course>[a-zA-Z0-9_-]+)\*\*\s*[—–-]\s*"
+    r"(?P<status>in progress|completed)\s*\((?P<count>[^()]*)\)\s*\.\s*"
+    r"Last:\s*(?P<last>[\w./-]+)\s*\.\s*"
+    r"Done:\s*(?P<done>.*?)\s*\.\s*"
+    r"XP:\s*(?P<xp>\d+)\s*\.?\s*$"
+)
+# Legacy bullet written before per-course progress existed:
+#   - **{course}** — chapter1--lesson02 (in progress).
+_COURSE_TAKEN_LEGACY_RE = re.compile(
+    r"^-\s*\*\*(?P<course>[a-zA-Z0-9_-]+)\*\*\s*[—–-]\s*"
+    r"(?P<last>[\w./-]+)\s*"
+    r"\((?P<status>in progress|completed)\)\.?\s*$"
+)
+_COURSE_COUNT_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def _slug_list(text: str) -> list[str]:
+    """Split a comma separated list of lesson slugs, keeping only valid tokens."""
+    result: list[str] = []
+    for token in text.split(","):
+        token = token.strip()
+        if token in ("", "none"):
+            continue
+        if re.fullmatch(r"[a-zA-Z0-9_-]+(?:--[a-zA-Z0-9_-]+)?", token):
+            result.append(token)
+    return result
+
+
+def parse_course_taken_line(line: str) -> CourseTaken | None:
+    """Parse a 'Courses taken' bullet into a CourseTaken (new or legacy format)."""
+    match = _COURSE_TAKEN_RE.match(line.strip())
+    if match:
+        count = match.group("count")
+        count_match = _COURSE_COUNT_RE.search(count)
+        total = int(count_match.group(2)) if count_match else None
+        return CourseTaken(
+            course_slug=match.group("course"),
+            last_lesson=match.group("last") if match.group("last") != "n/a" else None,
+            done=_slug_list(match.group("done")),
+            xp=int(match.group("xp")),
+            total=total,
+            completed=match.group("status") == "completed",
+        )
+
+    legacy = _COURSE_TAKEN_LEGACY_RE.match(line.strip())
+    if legacy:
+        return CourseTaken(
+            course_slug=legacy.group("course"),
+            last_lesson=legacy.group("last"),
+            completed=legacy.group("status") == "completed",
+        )
+
+    return None
+
+
+def format_course_taken_line(entry: CourseTaken) -> str:
+    """Render a CourseTaken as a single human-readable 'Courses taken' bullet."""
+    done_count = len(entry.done)
+    if entry.total:
+        label = f"{'completed' if entry.completed else 'in progress'} ({done_count}/{entry.total})"
+    else:
+        label = (
+            f"{'completed' if entry.completed else 'in progress'} "
+            f"({done_count} lesson{'s' if done_count != 1 else ''} done)"
+        )
+    last = entry.last_lesson or "n/a"
+    done_text = ", ".join(entry.done) if entry.done else "none"
+    return f"- **{entry.course_slug}** — {label}. Last: {last}. Done: {done_text}. XP: {entry.xp}."
+
+
+def _course_catalog(course_slug: str) -> list[tuple[str, int, str]] | None:
+    """Return [(slug, order, title)] for a file course, or None when unavailable."""
+    try:
+        from routers.file_courses import parse_course
+    except Exception:
+        return None
+    try:
+        course = parse_course(course_slug)
+    except Exception:
+        return None
+    if course is None:
+        return None
+    return [(lesson.slug, lesson.order, lesson.title) for lesson in course.lessons]
+
+
+def _refresh_course_status(entry: CourseTaken, course_slug: str) -> None:
+    """Sync total/completed against the course catalog when it can be resolved."""
+    catalog = _course_catalog(course_slug)
+    if catalog is None:
+        # No catalog (e.g. offline or deleted course): trust stored counts but do not
+        # over-claim completion if the stored total has since grown beyond what we know.
+        if entry.total is not None and entry.completed and len(entry.done) < entry.total:
+            entry.completed = False
+        return
+    entry.total = len(catalog)
+    known = {slug for slug, _order, _title in catalog}
+    entry.completed = bool(known) and known.issubset(set(entry.done))
+
+
+def _load_course_taken(sections: dict[str, list[str]], course_slug: str) -> CourseTaken:
+    """Find the existing Courses-taken entry for a course, migrating legacy bullets."""
+    taken = sections.setdefault("Courses taken", [])
+    prefix = f"- **{course_slug}**"
+    for idx, line in enumerate(taken):
+        if line.strip().startswith(prefix):
+            parsed = parse_course_taken_line(line)
+            if parsed is not None:
+                return parsed
+            # Unparseable but same-course bullet: replace it with a fresh entry.
+            fresh = CourseTaken(course_slug=course_slug)
+            taken[idx] = format_course_taken_line(fresh)
+            sections["Courses taken"] = taken
+            return fresh
+    return CourseTaken(course_slug=course_slug)
+
+
+def _write_course_taken(sections: dict[str, list[str]], entry: CourseTaken) -> None:
+    """Upsert the CourseTaken bullet, preserving list position."""
+    taken = sections.setdefault("Courses taken", [])
+    prefix = f"- **{entry.course_slug}**"
+    line = format_course_taken_line(entry)
+    for idx, existing in enumerate(taken):
+        if existing.strip().startswith(prefix):
+            taken[idx] = line
+            sections["Courses taken"] = taken
+            return
+    taken.append(line)
+    sections["Courses taken"] = taken
+
+
+def _payload_xp(payload: dict[str, Any]) -> int:
+    raw = payload.get("xp", 35)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 35
+
+
 def _handle_lesson_opened(
     fm: LearnerFrontMatter, sections: dict[str, list[str]], payload: dict[str, Any]
 ) -> None:
@@ -293,21 +447,13 @@ def _handle_lesson_opened(
 
     course_slug = payload.get("course_slug", "")
     lesson_slug = payload.get("lesson_slug", "")
-    if not course_slug:
+    if not course_slug or not lesson_slug:
         return
 
-    taken = sections.get("Courses taken", [])
-    entry_prefix = f"- **{course_slug}**"
-    new_entry = f"- **{course_slug}** — {lesson_slug} (in progress)."
-
-    for idx, line in enumerate(taken):
-        if line.strip().startswith(entry_prefix):
-            taken[idx] = new_entry
-            sections["Courses taken"] = taken
-            return
-
-    taken.append(new_entry)
-    sections["Courses taken"] = taken
+    entry = _load_course_taken(sections, course_slug)
+    entry.last_lesson = lesson_slug
+    _refresh_course_status(entry, course_slug)
+    _write_course_taken(sections, entry)
 
 
 def _handle_run_result(sections: dict[str, list[str]], payload: dict[str, Any]) -> None:
@@ -316,6 +462,10 @@ def _handle_run_result(sections: dict[str, list[str]], payload: dict[str, Any]) 
 
     course_slug = payload.get("course_slug", "")
     lesson_slug = payload.get("lesson_slug", "")
+    # Only meaningful when the run is attached to a known course/lesson.
+    if not course_slug or not lesson_slug:
+        return
+
     language = payload.get("language", "python")
     signals = sections.get("Signals", [])
 
@@ -330,15 +480,25 @@ def _handle_run_result(sections: dict[str, list[str]], payload: dict[str, Any]) 
 
 
 def _handle_lesson_passed(sections: dict[str, list[str]], payload: dict[str, Any]) -> None:
-    """Record a passing non-code submission (spreadsheet/drawing) as a signal."""
+    """Record a passing submission: persist completion + XP and mark the course done."""
     course_slug = payload.get("course_slug", "")
     lesson_slug = payload.get("lesson_slug", "")
+    if not course_slug or not lesson_slug:
+        return
+
     modality = payload.get("modality", "submission")
-    signals = sections.get("Signals", [])
+    signals = sections.setdefault("Signals", [])
     signal_text = f"- Completed {course_slug} ({lesson_slug}) with a passing {modality} submission."
     if signal_text not in signals:
         signals.append(signal_text)
     sections["Signals"] = signals[-10:]
+
+    entry = _load_course_taken(sections, course_slug)
+    if lesson_slug not in entry.done:
+        entry.done.append(lesson_slug)
+        entry.xp += _payload_xp(payload)
+    _refresh_course_status(entry, course_slug)
+    _write_course_taken(sections, entry)
 
 
 def _handle_reset(sections: dict[str, list[str]], payload: dict[str, Any]) -> None:
@@ -665,3 +825,39 @@ def apply_questionnaire_profile(
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(markdown, encoding="utf-8")
     return get_or_create_profile(username, base_dir)
+
+
+def get_user_progress(username: str, base_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Return structured per-course progress for a learner (single source: LEARNING.md)."""
+    _, parsed = get_or_create_profile(username, base_dir)
+
+    progress: list[dict[str, Any]] = []
+    for line in parsed.get("courses_taken", []):
+        entry = parse_course_taken_line(line)
+        if entry is None:
+            continue
+
+        record: dict[str, Any] = {
+            "course_slug": entry.course_slug,
+            "resume_lesson": entry.last_lesson,
+            "completed_lessons": list(entry.done),
+            "completed": entry.completed,
+            "done_count": len(entry.done),
+            "xp": entry.xp,
+            "lesson_count": entry.total,
+            "resume_order": None,
+            "resume_title": None,
+        }
+
+        catalog = _course_catalog(entry.course_slug)
+        if catalog is not None:
+            record["lesson_count"] = len(catalog)
+            if entry.last_lesson:
+                for slug, order, title in catalog:
+                    if slug == entry.last_lesson:
+                        record["resume_order"] = order
+                        record["resume_title"] = title
+                        break
+
+        progress.append(record)
+    return progress

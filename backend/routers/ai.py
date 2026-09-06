@@ -6,9 +6,9 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentic_workflow import CourseGenerationError
 from ai_service import ai_service
-from auth import User, get_current_admin, get_current_user
-from learning_paths import LearningResource
+from auth import User, get_current_user
 from llm import providers_public
 from routers.file_courses import COURSES_DIR
 from run_limits import (
@@ -19,6 +19,16 @@ from run_limits import (
 )
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+MAX_RESOURCE_CHARS = 8_000
+
+
+class LearningResource(BaseModel):
+    """A learner-supplied reference (notes / docs) used to ground a generated course."""
+
+    kind: str = "text"
+    name: str = "learner notes"
+    text: str = Field(..., max_length=MAX_RESOURCE_CHARS)
 
 
 def _find_root_env() -> Path:
@@ -52,11 +62,6 @@ def _update_env_file(env_path: Path, key: str, value: str) -> None:
         new_content = content + f"{replacement}\n"
 
     env_path.write_text(new_content, encoding="utf-8")
-
-
-class GenerateExerciseRequest(BaseModel):
-    prompt: str
-    language: str = "python"
 
 
 class ChatMessage(BaseModel):
@@ -204,14 +209,6 @@ def configure_key(request: Request, body: ConfigureKeyRequest):
     )
 
 
-@router.post("/generate/exercise")
-def generate_exercise(request: GenerateExerciseRequest, admin: User = Depends(get_current_admin)):
-    result = ai_service.generate_exercise(request.prompt, request.language)
-    if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
-    return result
-
-
 @router.post("/learning-path/build", response_model=BuildCourseResponse)
 def build_learning_path(request: BuildCourseRequest, user: User = Depends(get_current_user)):
     """Build a playable, grounded course from a learner's question using agentic tool calls."""
@@ -228,6 +225,11 @@ def build_learning_path(request: BuildCourseRequest, user: User = Depends(get_cu
             username=user.username,
             courses_dir=COURSES_DIR,
         )
+    except CourseGenerationError as exc:
+        # The builder refused to publish (e.g. no AI model configured, model
+        # failed, or lessons needed unowned assets). Nothing was written to disk;
+        # surface the honest reason instead of a fake course.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:

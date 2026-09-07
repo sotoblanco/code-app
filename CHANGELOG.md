@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.38](https://github.com/sotoblanco/BaseLayer/compare/v0.1.37...v0.1.38) (2026-09-07)
+
+
+### Features
+
+* add course and lesson export, import, and one-click share links ([#95](https://github.com/sotoblanco/BaseLayer/issues/95)) ([2c4f135](https://github.com/sotoblanco/BaseLayer/commit/2c4f135ef4c6bdcbdfeaf3c853012038564df519))
+
 ### [0.1.37](https://github.com/sotoblanco/BaseLayer/compare/v0.1.36...v0.1.37) (2026-09-07)
 
 ### [0.1.36](https://github.com/sotoblanco/BaseLayer/compare/v0.1.35...v0.1.36) (2026-09-07)

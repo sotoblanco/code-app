@@ -191,6 +191,15 @@ export const buildLearningCourse = async (
     return response.json();
 };
 
+export interface CourseInstructionsResult {
+    instructions: string;
+    personalization?: {
+        understanding_level: string;
+        tutor_style: string;
+        explanation_length: string;
+    } | null;
+}
+
 /**
  * Dead-simple, no-LLM path: generate the copy-paste instruction prompt for a
  * topic. The learner pastes this into any free chat and pastes the reply back
@@ -199,7 +208,7 @@ export const buildLearningCourse = async (
 export const getCourseBuildInstructions = async (
     topic: string,
     referenceText?: string,
-): Promise<string> => {
+): Promise<CourseInstructionsResult> => {
     const token = localStorage.getItem('token');
     if (!token) {
         throw new Error('Please start a learner session before building a course.');
@@ -222,7 +231,10 @@ export const getCourseBuildInstructions = async (
         throw new Error(errorData.detail || 'Could not generate the build instructions');
     }
     const data = await response.json();
-    return data.instructions as string;
+    return {
+        instructions: data.instructions as string,
+        personalization: data.personalization ?? null,
+    };
 };
 
 /** Import a chat model's pasted reply as a verified course. No AI key needed. */

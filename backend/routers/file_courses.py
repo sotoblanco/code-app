@@ -17,6 +17,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -575,6 +576,7 @@ def get_lesson_solution(
 
 class DrawingSubmission(BaseModel):
     image_data: str  # base64-encoded PNG from the canvas
+    xp: int | None = Field(default=None, ge=0, le=500)  # XP earned by the learner's player UI
 
 
 def _decode_sketch_image(raw_image_data: str) -> bytes:
@@ -620,7 +622,7 @@ def submit_drawing(
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     if result.get("passed"):
-        _record_modality_pass(user.username, course_slug, lesson_slug, "drawing")
+        _record_modality_pass(user.username, course_slug, lesson_slug, "drawing", xp=submission.xp)
     return result
 
 
@@ -689,21 +691,31 @@ def create_sheet_copy(course_slug: str, lesson_slug: str, user: User = Depends(g
 
 class SpreadsheetVerificationRequest(BaseModel):
     sheet_id: str  # Student copy URL or bare sheet id
+    xp: int | None = Field(default=None, ge=0, le=500)  # XP earned by the learner's player UI
 
 
-def _record_modality_pass(username: str, course_slug: str, lesson_slug: str, modality: str) -> None:
-    """Append a completion signal to the learner's LEARNING.md (best-effort)."""
+def _record_modality_pass(
+    username: str,
+    course_slug: str,
+    lesson_slug: str,
+    modality: str,
+    xp: int | None = None,
+) -> None:
+    """Record a passing submission into the learner's LEARNING.md (best-effort)."""
+    payload: dict[str, Any] = {
+        "course_slug": course_slug,
+        "lesson_slug": lesson_slug,
+        "modality": modality,
+    }
+    if xp is not None:
+        payload["xp"] = xp
     try:
         from learner_profile import record_learner_event
 
         record_learner_event(
             username=username,
             event_type="lesson_passed",
-            payload={
-                "course_slug": course_slug,
-                "lesson_slug": lesson_slug,
-                "modality": modality,
-            },
+            payload=payload,
         )
     except Exception:
         pass
@@ -747,5 +759,7 @@ def verify_spreadsheet(
 
     result = grade_sheet(lesson.success_cells, actual_values)
     if result.passed:
-        _record_modality_pass(user.username, course_slug, lesson_slug, "spreadsheet")
+        _record_modality_pass(
+            user.username, course_slug, lesson_slug, "spreadsheet", xp=submission.xp
+        )
     return result

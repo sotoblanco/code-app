@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, ChevronRight, FolderCode, Database, Compass, Sliders } from 'lucide-react';
+import { Terminal, ChevronRight, FolderCode, Database, Compass, Sliders, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL, APP_VERSION } from '../config';
 import { UserMenu } from '../components/UserMenu';
 import { WelcomeGate } from '../components/auth/WelcomeGate';
 import CourseBuilder from '../components/CourseBuilder';
 import { LearningProfileModal } from '../components/LearningProfileModal';
-import { getLearningProfile } from '../services/profileService';
+import { getLearningProfile, fetchMyProgress, type CourseProgressSummary } from '../services/profileService';
 import { isLocalHost } from '../isLocalHost';
 
 interface FileCourse {
@@ -33,10 +33,12 @@ interface UnifiedCourse {
   lesson_count: number;
   navigatePath: string;
   skills?: string[];
+  progress?: CourseProgressSummary | null;
 }
 
 export default function CoursesPage() {
   const [courses, setCourses] = useState<UnifiedCourse[]>([]);
+  const [progressBySlug, setProgressBySlug] = useState<Record<string, CourseProgressSummary>>({});
   const [loading, setLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isLearningGuideOpen, setIsLearningGuideOpen] = useState(false);
@@ -91,15 +93,22 @@ export default function CoursesPage() {
         if (fileRes.status === 'fulfilled' && fileRes.value.ok) {
           const files: FileCourse[] = await fileRes.value.json();
           unified.push(
-            ...files.map((c) => ({
-              id: `file-${c.slug}`,
-              type: 'file' as const,
-              title: c.title,
-              description: c.description,
-              lesson_count: c.lesson_count,
-              navigatePath: `/file-course/${c.slug}`,
-              skills: c.skills,
-            }))
+            ...files.map((c) => {
+              const progress = progressBySlug[c.slug];
+              const resume = progress && !progress.completed && progress.resume_lesson;
+              return {
+                id: `file-${c.slug}`,
+                type: 'file' as const,
+                title: c.title,
+                description: c.description,
+                lesson_count: c.lesson_count,
+                navigatePath: resume
+                  ? `/file-course/${c.slug}/${progress!.resume_lesson}`
+                  : `/file-course/${c.slug}`,
+                skills: c.skills,
+                progress: progress ?? null,
+              };
+            })
           );
         }
 
@@ -126,7 +135,26 @@ export default function CoursesPage() {
     };
 
     fetchCourses();
-  }, []);
+  }, [progressBySlug]);
+
+  useEffect(() => {
+    let active = true;
+    if (!isAuthenticated) {
+      setProgressBySlug({});
+      return;
+    }
+    fetchMyProgress().then((list) => {
+      if (!active) return;
+      const bySlug: Record<string, CourseProgressSummary> = {};
+      list.forEach((p) => {
+        bySlug[p.course_slug] = p;
+      });
+      setProgressBySlug(bySlug);
+    });
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated]);
 
   const hasNoCourses = courses.length === 0;
 
@@ -296,6 +324,42 @@ export default function CoursesPage() {
                       </div>
                     )}
 
+                    {course.progress && course.type === 'file' && (
+                      <div className="mb-3">
+                        <div className="flex items-center justify-between text-[11px] mb-1.5">
+                          {course.progress.completed ? (
+                            <span className="flex items-center gap-1 font-semibold text-emerald-400">
+                              <CheckCircle2 size={12} /> Completed
+                            </span>
+                          ) : course.progress.resume_order ? (
+                            <span className="font-semibold text-emerald-300/90">
+                              Continue {course.title} — lesson {course.progress.resume_order}
+                            </span>
+                          ) : (
+                            <span className="font-medium text-slate-400">In progress</span>
+                          )}
+                          <span className="text-slate-500 font-mono">
+                            {course.progress.done_count}/{course.lesson_count} done
+                          </span>
+                        </div>
+                        <div className="h-1 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              course.progress.completed ? 'bg-emerald-500' : 'bg-emerald-500/70'
+                            }`}
+                            style={{
+                              width: `${Math.min(
+                                100,
+                                Math.round(
+                                  (course.progress.done_count / Math.max(1, course.lesson_count)) * 100
+                                )
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mt-auto pt-4 flex items-center justify-between text-sm text-slate-400">
                       <span>
                         {course.lesson_count} {course.type === 'file' ? 'Lessons' : 'Exercises'}
@@ -305,7 +369,12 @@ export default function CoursesPage() {
                           course.type === 'file' ? 'text-emerald-400' : 'text-blue-400'
                         }`}
                       >
-                        Start <ChevronRight size={16} />
+                        {course.progress
+                          ? course.progress.completed
+                            ? 'Review'
+                            : 'Continue'
+                          : 'Start'}{' '}
+                        <ChevronRight size={16} />
                       </span>
                     </div>
                   </div>

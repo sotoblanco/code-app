@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import MarkdownViewer from '../components/MarkdownViewer';
 import { CodeEditor } from '../components/CodeEditor';
@@ -15,10 +15,11 @@ import { Panel, Group, Separator } from "react-resizable-panels";
 import { UserMenu } from '../components/UserMenu';
 import { WelcomeGate } from '../components/auth/WelcomeGate';
 import { fetchSolutionCode } from '../solutionApi';
-import { emitLearnerEvent } from '../services/profileService';
+import { emitLearnerEvent, fetchMyProgress } from '../services/profileService';
 import { ShareAchievement } from '../ux-light/components/ShareAchievement';
 import { isAuthorRole, studentTestsPlaceholder } from '../testVisibility';
 import type { SharePayload } from '../ux-light/shareCard';
+import { findLessonPosition, useLessonUrlSync } from '../lessonUrl';
 interface Lesson {
     slug: string;
     title: string;
@@ -53,7 +54,7 @@ interface FileCourse {
 }
 
 export default function FileCodingPage({ onSwitchUi }: { onSwitchUi?: () => void }) {
-    const { slug } = useParams();
+    const { slug, lessonSlug } = useParams();
     const navigate = useNavigate();
     const [course, setCourse] = useState<FileCourse | null>(null);
     const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -116,9 +117,12 @@ export default function FileCodingPage({ onSwitchUi }: { onSwitchUi?: () => void
             }
             setCourseError(null);
             try {
-                const res = await fetch(`${API_BASE_URL}/file-courses/${slug}`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                });
+                const [res, progress] = await Promise.all([
+                    fetch(`${API_BASE_URL}/file-courses/${slug}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }),
+                    fetchMyProgress(),
+                ]);
                 if (res.status === 401) {
                     logout();
                     setIsAuthModalOpen(true);
@@ -127,17 +131,18 @@ export default function FileCodingPage({ onSwitchUi }: { onSwitchUi?: () => void
                 }
                 if (res.ok) {
                     const data = await res.json();
-                    setCourse(data);
                     const extractedChapters = extractChapters(data.lessons);
+                    setCourse(data);
                     setChapters(extractedChapters);
 
-                    // Initialize code if lessons exist
-                    if (extractedChapters.length > 0 && extractedChapters[0].lessons.length > 0) {
-                        const firstLesson = extractedChapters[0].lessons[0];
-                        const draftKey = `code_draft_${slug}_${firstLesson.slug}`;
-                        const uxKey = `uxlight_code_${slug}_${firstLesson.slug}`;
-                        const saved = localStorage.getItem(draftKey) ?? localStorage.getItem(uxKey);
-                        setCode(saved !== null ? saved : (firstLesson.initial_code || ""));
+                    // Prefer the lesson named in the URL, else the learner's last lesson, else lesson 1.
+                    const courseProgress = progress.find((p) => p.course_slug === slug);
+                    const target =
+                        findLessonPosition(extractedChapters, lessonSlug) ??
+                        findLessonPosition(extractedChapters, courseProgress?.resume_lesson ?? null);
+                    if (target) {
+                        setCurrentChapterIndex(target.chapterIndex);
+                        setCurrentLessonIndex(target.lessonIndex);
                     }
                 } else {
                     setCourseError(res.status === 404 ? 'Course not found.' : 'Unable to load this course.');
@@ -272,6 +277,12 @@ export default function FileCodingPage({ onSwitchUi }: { onSwitchUi?: () => void
                         origin: { y: 0.6 }
                     });
                     if (course && lesson) {
+                        emitLearnerEvent('lesson_passed', {
+                            course_slug: slug,
+                            lesson_slug: lesson.slug,
+                            modality: 'code',
+                            xp: 35,
+                        });
                         setSharePayload({
                             kind: 'lesson',
                             courseTitle: course.title,
@@ -334,6 +345,19 @@ export default function FileCodingPage({ onSwitchUi }: { onSwitchUi?: () => void
             setIsSubmittingDrawing(false);
         }
     };
+
+    const selectLesson = useCallback((chapterIndex: number, lessonIndex: number) => {
+        setCurrentChapterIndex(chapterIndex);
+        setCurrentLessonIndex(lessonIndex);
+    }, []);
+
+    useLessonUrlSync({
+        courseSlug: slug,
+        chapters,
+        currentChapterIndex,
+        currentLessonIndex,
+        onSelectLesson: selectLesson,
+    });
 
     if (!course || chapters.length === 0) {
         return (

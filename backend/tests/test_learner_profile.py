@@ -10,6 +10,7 @@ from learner_profile import (
     aggregate_questionnaire_to_markdown,
     apply_questionnaire_profile,
     get_or_create_profile,
+    get_user_progress,
     parse_frontmatter,
     record_learner_event,
     update_profile_markdown,
@@ -202,6 +203,147 @@ I prefer visual and drawing warm-ups before jumping to code.
         assert parsed["frontmatter"]["tutor_style"] == "socratic"
         assert parsed["frontmatter"]["understanding_level"] == "advanced"
 
+    def test_lesson_opened_tracks_last_lesson_per_course(self, tmp_path: Path):
+        get_or_create_profile("resumer", base_dir=tmp_path)
+
+        record_learner_event(
+            username="resumer",
+            event_type="lesson_opened",
+            payload={
+                "course_slug": "tinytorch",
+                "lesson_slug": "chapter1--lesson01",
+                "ui": "light",
+            },
+            base_dir=tmp_path,
+        )
+        record_learner_event(
+            username="resumer",
+            event_type="lesson_opened",
+            payload={
+                "course_slug": "tinytorch",
+                "lesson_slug": "chapter2--lesson02",
+                "ui": "light",
+            },
+            base_dir=tmp_path,
+        )
+        record_learner_event(
+            username="resumer",
+            event_type="lesson_opened",
+            payload={"course_slug": "llms-from-scratch", "lesson_slug": "lesson03", "ui": "light"},
+            base_dir=tmp_path,
+        )
+
+        progress = {p["course_slug"]: p for p in get_user_progress("resumer", base_dir=tmp_path)}
+        assert progress["tinytorch"]["resume_lesson"] == "chapter2--lesson02"
+        assert progress["llms-from-scratch"]["resume_lesson"] == "lesson03"
+
+    def test_lesson_passed_persists_completion_and_xp_idempotently(self, tmp_path: Path):
+        get_or_create_profile("finisher", base_dir=tmp_path)
+
+        def pass_lesson(xp: int):
+            record_learner_event(
+                username="finisher",
+                event_type="lesson_passed",
+                payload={
+                    "course_slug": "tinytorch",
+                    "lesson_slug": "chapter1--lesson01",
+                    "modality": "code",
+                    "xp": xp,
+                },
+                base_dir=tmp_path,
+            )
+            return get_user_progress("finisher", base_dir=tmp_path)[0]
+
+        first = pass_lesson(25)
+        assert first["done_count"] == 1
+        assert first["completed_lessons"] == ["chapter1--lesson01"]
+        assert first["xp"] == 25
+
+        # Re-passing the same lesson must not double-count completion or XP.
+        second = pass_lesson(40)
+        assert second["done_count"] == 1
+        assert second["completed_lessons"] == ["chapter1--lesson01"]
+        assert second["xp"] == 25
+
+    def test_passing_last_lesson_marks_course_complete(self, tmp_path: Path, monkeypatch):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        course_dir = courses_dir / "tiny"
+        chapter_dir = course_dir / "chapter1"
+        chapter_dir.mkdir(parents=True)
+        for name in ("lesson01", "lesson02"):
+            lesson_dir = chapter_dir / name
+            lesson_dir.mkdir()
+            (lesson_dir / "README.md").write_text(f"# {name}")
+            (lesson_dir / "main.py").write_text("x = 1")
+
+        get_or_create_profile("completer", base_dir=tmp_path)
+
+        def progress() -> dict:
+            return get_user_progress("completer", base_dir=tmp_path)[0]
+
+        record_learner_event(
+            username="completer",
+            event_type="lesson_opened",
+            payload={"course_slug": "tiny", "lesson_slug": "chapter1--lesson01", "ui": "light"},
+            base_dir=tmp_path,
+        )
+        record_learner_event(
+            username="completer",
+            event_type="lesson_passed",
+            payload={
+                "course_slug": "tiny",
+                "lesson_slug": "chapter1--lesson01",
+                "modality": "code",
+                "xp": 30,
+            },
+            base_dir=tmp_path,
+        )
+        assert progress()["completed"] is False
+
+        record_learner_event(
+            username="completer",
+            event_type="lesson_passed",
+            payload={
+                "course_slug": "tiny",
+                "lesson_slug": "chapter1--lesson02",
+                "modality": "code",
+                "xp": 35,
+            },
+            base_dir=tmp_path,
+        )
+        final = progress()
+        assert final["completed"] is True
+        assert final["done_count"] == final["lesson_count"] == 2
+        assert final["xp"] == 65
+
+        # Reopening a lesson of a completed course keeps it completed.
+        record_learner_event(
+            username="completer",
+            event_type="lesson_opened",
+            payload={"course_slug": "tiny", "lesson_slug": "chapter1--lesson01", "ui": "classic"},
+            base_dir=tmp_path,
+        )
+        assert progress()["completed"] is True
+
+    def test_progress_is_isolated_per_user(self, tmp_path: Path):
+        get_or_create_profile("alice", base_dir=tmp_path)
+        get_or_create_profile("bob", base_dir=tmp_path)
+
+        record_learner_event(
+            username="alice",
+            event_type="lesson_opened",
+            payload={"course_slug": "tinytorch", "lesson_slug": "lesson01", "ui": "light"},
+            base_dir=tmp_path,
+        )
+
+        alice = {p["course_slug"] for p in get_user_progress("alice", base_dir=tmp_path)}
+        bob = get_user_progress("bob", base_dir=tmp_path)
+        assert "tinytorch" in alice
+        assert bob == []
+
 
 class TestLearnerProfileAPI:
     def test_get_learning_profile_requires_auth(self, client):
@@ -263,6 +405,51 @@ Advanced test runner.
         assert response.json()["success"] is True
         signals = response.json()["profile"]["signals"]
         assert any("Reset exercise on tinytorch" in s for s in signals)
+
+    def test_get_progress_requires_auth(self, client):
+        response = client.get("/me/progress")
+        assert response.status_code == 401
+
+    def test_get_progress_returns_resume_and_completions(self, client, auth_headers):
+        event = client.post(
+            "/me/learning-profile/events",
+            json={
+                "event_type": "lesson_opened",
+                "payload": {
+                    "course_slug": "tinytorch",
+                    "lesson_slug": "chapter1--lesson02",
+                    "ui": "light",
+                },
+            },
+            headers=auth_headers,
+        )
+        assert event.status_code == 200
+
+        passed = client.post(
+            "/me/learning-profile/events",
+            json={
+                "event_type": "lesson_passed",
+                "payload": {
+                    "course_slug": "tinytorch",
+                    "lesson_slug": "chapter1--lesson01",
+                    "modality": "code",
+                    "xp": 25,
+                },
+            },
+            headers=auth_headers,
+        )
+        assert passed.status_code == 200
+
+        response = client.get("/me/progress", headers=auth_headers)
+        assert response.status_code == 200
+        courses = response.json()["courses"]
+        assert len(courses) == 1
+        entry = courses[0]
+        assert entry["course_slug"] == "tinytorch"
+        assert entry["resume_lesson"] == "chapter1--lesson02"
+        assert entry["completed_lessons"] == ["chapter1--lesson01"]
+        assert entry["xp"] == 25
+        assert entry["completed"] is False
 
     def test_aggregate_questionnaire_to_markdown(self):
         answers = LearnerQuestionnaire(

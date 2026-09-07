@@ -101,3 +101,92 @@ def test_validate_custom_requires_base():
         raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "API base" in str(exc)
+
+
+def test_ai_configure_ollama_unreachable_friendly_error(client, monkeypatch):
+    monkeypatch.setenv("ALLOW_LOCAL_WELCOME", "true")
+    res = client.post(
+        "/ai/configure-key",
+        json={
+            "provider": "ollama",
+            "api_base": "http://localhost:59999/v1",
+            "test_connection": True,
+        },
+    )
+    assert res.status_code == 400
+    detail = res.json()["detail"]
+    assert "Could not reach Ollama at http://localhost:59999" in detail
+    assert "ollama serve" in detail
+
+
+def test_ai_configure_ollama_reachable_with_test_connection(client, tmp_path, monkeypatch):
+    dummy_env = tmp_path / ".env"
+    dummy_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("ENV_FILE", str(dummy_env))
+    monkeypatch.setenv("ALLOW_LOCAL_WELCOME", "true")
+
+    class MockResponse:
+        status_code = 200
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: MockResponse())
+
+    res = client.post(
+        "/ai/configure-key",
+        json={
+            "provider": "ollama",
+            "model": "llama3.2",
+            "api_base": "http://localhost:11434/v1",
+            "test_connection": True,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert data["saved_to_file"] is True
+    assert "connected successfully" in data["message"]
+    assert "LLM_PROVIDER=ollama" in dummy_env.read_text(encoding="utf-8")
+
+
+def test_ai_test_connection_endpoint(client, monkeypatch):
+    monkeypatch.setenv("ALLOW_LOCAL_WELCOME", "true")
+
+    class MockResponse:
+        status_code = 200
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: MockResponse())
+
+    res = client.post(
+        "/ai/test-connection",
+        json={"provider": "ollama", "model": "llama3.2"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    assert "Successfully reached Ollama" in data["message"]
+
+    import requests
+
+    def mock_fail(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("Connection refused")
+
+    monkeypatch.setattr("requests.get", mock_fail)
+    res_fail = client.post(
+        "/ai/test-connection",
+        json={"provider": "ollama", "api_base": "http://localhost:59999/v1"},
+    )
+    assert res_fail.status_code == 400
+    assert "Could not reach Ollama at http://localhost:59999" in res_fail.json()["detail"]
+
+
+def test_ai_test_connection_forbidden_non_local(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    monkeypatch.setenv("ALLOW_LOCAL_WELCOME", "false")
+    remote_client = TestClient(app, client=("203.0.113.1", 12345))
+    res = remote_client.post(
+        "/ai/test-connection",
+        json={"provider": "ollama"},
+    )
+    assert res.status_code == 403

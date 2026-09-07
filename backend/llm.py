@@ -273,3 +273,57 @@ def providers_public() -> list[dict[str, object]]:
         }
         for pid in PROVIDER_ORDER
     ]
+
+
+def is_connection_error(exc: Exception) -> bool:
+    """Determine whether an exception represents a network connection failure."""
+    import openai
+    import requests
+
+    if isinstance(
+        exc,
+        (
+            openai.APIConnectionError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            ConnectionRefusedError,
+            ConnectionError,
+            OSError,
+        ),
+    ):
+        return True
+
+    err_str = f"{exc} {getattr(exc, '__cause__', '')}".lower()
+    keywords = (
+        "connection refused",
+        "connect error",
+        "connection error",
+        "connect call failed",
+        "failed to establish a new connection",
+        "errno 61",
+        "errno 111",
+        "timeout",
+        "timed out",
+    )
+    return any(kw in err_str for kw in keywords)
+
+
+def format_ollama_error(exc: Exception, base_url: str | None = None) -> str:
+    """Return a clear, friendly error message when Ollama is unreachable or model missing."""
+    base = (base_url or "http://localhost:11434/v1").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    if not base:
+        base = "http://localhost:11434"
+
+    err_str = f"{exc}".lower()
+    if (
+        "not_found" in err_str
+        or "404" in err_str
+        or ("model" in err_str and "not found" in err_str)
+    ):
+        return (
+            "Ollama model not found. Make sure to pull the model first using `ollama pull <model>`."
+        )
+
+    return f"Could not reach Ollama at {base}. Make sure Ollama is running (`ollama serve`)."

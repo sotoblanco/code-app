@@ -92,12 +92,27 @@ class ConfigureKeyRequest(BaseModel):
     api_key: str = ""
     model: str | None = None
     api_base: str | None = None
+    test_connection: bool = False
 
 
 class ConfigureKeyResponse(BaseModel):
     success: bool
     message: str
     saved_to_file: bool
+    provider: str = ""
+    model: str = ""
+
+
+class TestConnectionRequest(BaseModel):
+    provider: str = "ollama"
+    api_key: str = ""
+    model: str | None = None
+    api_base: str | None = None
+
+
+class TestConnectionResponse(BaseModel):
+    success: bool
+    message: str
     provider: str = ""
     model: str = ""
 
@@ -222,6 +237,11 @@ def configure_key(request: Request, body: ConfigureKeyRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if body.test_connection:
+        ok, msg = ai_service.check_connection(settings)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+
     env_path = _find_root_env()
     try:
         _update_env_file(env_path, "LLM_PROVIDER", settings.provider)
@@ -241,10 +261,52 @@ def configure_key(request: Request, body: ConfigureKeyRequest):
             model=settings.model,
         )
 
+    success_msg = (
+        f"{settings.provider} connected successfully and saved to .env"
+        if body.test_connection
+        else f"{settings.provider} configured and saved to .env"
+    )
     return ConfigureKeyResponse(
         success=True,
-        message=f"{settings.provider} configured and saved to .env",
+        message=success_msg,
         saved_to_file=True,
+        provider=settings.provider,
+        model=settings.model,
+    )
+
+
+@router.post("/test-connection", response_model=TestConnectionResponse)
+def test_connection_endpoint(request: Request, body: TestConnectionRequest):
+    client_host = request.client.host if request.client else ""
+    is_local = (
+        client_host in ("127.0.0.1", "localhost", "::1", "testclient")
+        or os.environ.get("ALLOW_LOCAL_WELCOME", "false").lower() == "true"
+    )
+    if not is_local:
+        raise HTTPException(
+            status_code=403,
+            detail="Testing the LLM connection via this endpoint is only permitted in local development.",
+        )
+
+    try:
+        from llm import validate_settings
+
+        settings = validate_settings(
+            provider=body.provider,
+            api_key=body.api_key,
+            model=body.model,
+            api_base=body.api_base,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    ok, msg = ai_service.check_connection(settings)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    return TestConnectionResponse(
+        success=True,
+        message=msg,
         provider=settings.provider,
         model=settings.model,
     )

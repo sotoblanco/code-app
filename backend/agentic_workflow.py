@@ -22,18 +22,25 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agentic_tools import (
-    TRANSPARENT_PNG_BYTES,
     CuratedCourseResult,
     CuratedLessonBlueprint,
-    LearnerContextResult,
-    LearningIntentResult,
-    PlatformToolsResult,
     ToolTrace,
     curate_solveit_course,
     get_context_learning,
     get_learning_intent,
     get_platform_content_tools,
 )
+
+
+class CourseGenerationError(RuntimeError):
+    """Raised when the builder must REFUSE to publish a course.
+
+    This happens when a course cannot be generated honestly: the LLM is
+    unavailable or returns nothing usable, or the lessons would depend on
+    platform-owned assets (a real template sheet, a real question image) that a
+    generative builder cannot supply. Raising guarantees that no placeholder or
+    topic-ignoring lesson set is ever written to disk as a real course.
+    """
 
 
 class AgenticWorkflowResult(BaseModel):
@@ -65,159 +72,6 @@ def _extract_json_from_llm(text: str) -> dict[str, Any]:
     return json.loads(json_str)
 
 
-def build_fallback_solveit_lessons(
-    intent: LearningIntentResult,
-    learner_ctx: LearnerContextResult,
-    platform_tools: PlatformToolsResult,
-) -> list[dict[str, Any]]:
-    """Synthesizes high-quality Solveit micro-lessons deterministically.
-
-    Used when LLM is offline, unconfigured, or rate-limited.
-    Guarantees that every lesson has concrete toy data, micro-tasks (1-3 lines),
-    and verified Python syntax.
-    """
-    topic_clean = intent.topic
-    primary_concepts = intent.target_concepts[:4] or ["core", "primitives", "chaining"]
-
-    # Incorporate learner preferred modalities if available
-    preferred = learner_ctx.preferred_modalities
-    is_guided = getattr(learner_ctx, "exercise_format", "") == "guided_completion"
-
-    lessons: list[dict[str, Any]] = []
-
-    # Lesson 1: Toy Data & Foundation
-    c1 = primary_concepts[0] if len(primary_concepts) > 0 else "data"
-    l1_starter = (
-        f"def create_{c1}():\n    # Replace each ____ with the corresponding number (10, 30)\n    return [____, 20, ____]\n"
-        if is_guided
-        else f"def create_{c1}():\n    # Write 1-2 lines to return [10, 20, 30]\n    pass\n"
-    )
-    l1_task = (
-        f"Replace the blanks (`____`) in `create_{c1}()` with `10` and `30`."
-        if is_guided
-        else f"Define `create_{c1}()` returning the 3-element list or vector."
-    )
-    lessons.append(
-        {
-            "title": f"Foundation: Minimal {c1.title()}",
-            "modality": "code",
-            "language": "python",
-            "objective": f"Initialize and inspect a minimal 3-element {c1} structure.",
-            "toy_data": "sample = [10, 20, 30] -> len is 3",
-            "expected_result": "3",
-            "micro_task": l1_task,
-            "inspect_prompt": f"Run the code. Does `create_{c1}()` have length 3?",
-            "curiosity_prompt": "Can we define this using a list comprehension or generator?",
-            "starter_code": l1_starter,
-            "test_code": f"from main import create_{c1}\n\nres = create_{c1}()\nassert len(res) == 3\nassert res[0] == 10\n",
-            "solution_code": f"def create_{c1}():\n    return [10, 20, 30]\n",
-            "source_refs": ["Platform Sandbox", intent.topic],
-            "skills": [c1.replace("-", " ").title(), "Toy data"],
-        }
-    )
-
-    # Lesson 2: Transformation / Operation
-    c2 = primary_concepts[1] if len(primary_concepts) > 1 else "transform"
-    l2_starter = (
-        "def scale_by_two(items):\n    # Replace each ____ with x to double each element\n    return [____ * 2 for ____ in items]\n"
-        if is_guided
-        else "def scale_by_two(items):\n    # 1-2 lines: return doubled elements\n    pass\n"
-    )
-    l2_task = (
-        "Replace the `____` blanks in `scale_by_two(items)` with variable `x`."
-        if is_guided
-        else "Implement `scale_by_two(items)` in 1-2 lines."
-    )
-    lessons.append(
-        {
-            "title": f"Micro-Step: {c2.title()} Transformation",
-            "modality": "code",
-            "language": "python",
-            "objective": "Apply a 1-line transformation to double each element.",
-            "toy_data": "items = [1, 2, 3] -> doubled = [2, 4, 6]",
-            "expected_result": "[2, 4, 6]",
-            "micro_task": l2_task,
-            "inspect_prompt": "Print the scaled output. Did [1, 2, 3] become [2, 4, 6]?",
-            "curiosity_prompt": "How does this compare to element-wise operations in NumPy or PyTorch?",
-            "starter_code": l2_starter,
-            "test_code": "from main import scale_by_two\n\nassert scale_by_two([1, 2, 3]) == [2, 4, 6]\nassert scale_by_two([]) == []\n",
-            "solution_code": "def scale_by_two(items):\n    return [x * 2 for x in items]\n",
-            "source_refs": ["Solveit JRY-before-DRY", "Platform Python Sandbox"],
-            "skills": [c2.replace("-", " ").title(), "Transforms"],
-        }
-    )
-
-    # Lesson 3: Optional Spreadsheet or Drawing if learner prefers multi-modal
-    if "drawing" in preferred:
-        lessons.append(
-            {
-                "title": f"Visual Architecture: {topic_clean} Dataflow",
-                "modality": "drawing",
-                "language": "python",
-                "objective": "Map the flow of data from input to output.",
-                "toy_data": "Input -> Processing Step -> Output",
-                "expected_result": "Direct arrow connecting input node to output node.",
-                "micro_task": "Draw arrows connecting the input container to the output evaluation block.",
-                "inspect_prompt": "Check that each node has an incoming and outgoing pathway.",
-                "curiosity_prompt": "What edge-case could cause this pathway to block or bottleneck?",
-                "question_image_desc": "Architectural diagram of dataflow pipeline",
-                "source_refs": ["BaseLayer Drawing Modality"],
-                "skills": ["Architecture diagram"],
-            }
-        )
-    elif "spreadsheet" in preferred:
-        lessons.append(
-            {
-                "title": f"Matrix Intuition: {topic_clean} in Sheets",
-                "modality": "spreadsheet",
-                "language": "python",
-                "objective": "Experiment with matrix broadcasting and array formulas.",
-                "toy_data": "Range A1:B2 = [[1, 2], [3, 4]]",
-                "expected_result": "Doubled matrix values",
-                "micro_task": "Use =ARRAYFORMULA(A1:B2 * 2) in the spreadsheet pane.",
-                "inspect_prompt": "Check cell C1: does it show 2, and D2 show 8?",
-                "curiosity_prompt": "How does Google Sheets ARRAYFORMULA map to NumPy vectorization?",
-                "google_sheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-                "copy_on_open": True,
-                "source_refs": ["BaseLayer Spreadsheet Modality"],
-                "skills": ["Spreadsheets", "Broadcasting"],
-            }
-        )
-
-    # Lesson 4: Composition into working primitive
-    c3 = primary_concepts[2] if len(primary_concepts) > 2 else "pipeline"
-    l4_starter = (
-        f"class {c3.title()}Runner:\n    def compute(self, data):\n        # Replace ____ with x to sum doubled items\n        return sum(____ * 2 for x in data)\n"
-        if is_guided
-        else f"class {c3.title()}Runner:\n    def compute(self, data):\n        # 1-3 lines: sum the doubled elements of data\n        pass\n"
-    )
-    l4_task = (
-        "Replace the `____` blank in `compute(data)` with variable `x`."
-        if is_guided
-        else f"Build `class {c3.title()}Runner` with a `compute(data)` method."
-    )
-    lessons.append(
-        {
-            "title": f"Composition: Clean {c3.title()} Primitive",
-            "modality": "code",
-            "language": "python",
-            "objective": "Compose the steps into a clean, minimal class (<25 lines).",
-            "toy_data": "data = [5, 10] -> processed = 30",
-            "expected_result": "30",
-            "micro_task": l4_task,
-            "inspect_prompt": "Instantiate the class and check the return value of compute([5, 10]).",
-            "curiosity_prompt": "Can we replace any remaining boilerplate with dynamic dispatch or properties?",
-            "starter_code": l4_starter,
-            "test_code": f"from main import {c3.title()}Runner\n\nrunner = {c3.title()}Runner()\nassert runner.compute([5, 10]) == 30\n",
-            "solution_code": f"class {c3.title()}Runner:\n    def compute(self, data):\n        return sum(x * 2 for x in data)\n",
-            "source_refs": ["Solveit Directive 3: Ruthless Boilerplate Elimination"],
-            "skills": [c3.replace("-", " ").title(), "Composition"],
-        }
-    )
-
-    return lessons
-
-
 def materialize_curated_course(
     curated: CuratedCourseResult,
     courses_dir: Path,
@@ -230,8 +84,20 @@ def materialize_curated_course(
       - README.md (Solveit instructions)
       - metadata.json (exercise_type configuration)
       - main.py, test.py, solution.py (for code exercises)
-      - question.png (for drawing exercises)
+
+    Generated courses publish code lessons only. Spreadsheet and drawing lessons
+    require platform-owned assets (a real template sheet id, a real question.png)
+    that a generative builder cannot fabricate, so they are refused up-front
+    before anything is written to disk.
     """
+    for lesson in curated.lessons:
+        if lesson.modality != "code":
+            raise CourseGenerationError(
+                f"Cannot publish lesson {lesson.order} ('{lesson.title}'): "
+                f"{lesson.modality} exercises need platform-owned assets that a "
+                "generated course cannot supply. No course was written to disk."
+            )
+
     course_path = courses_dir / curated.slug
     if course_path.exists():
         # Add timestamp suffix if collision occurs
@@ -292,20 +158,6 @@ def materialize_curated_course(
             (lesson_dir / "main.py").write_text(lesson.starter_code, encoding="utf-8")
             (lesson_dir / "test.py").write_text(lesson.test_code, encoding="utf-8")
             (lesson_dir / "solution.py").write_text(lesson.solution_code, encoding="utf-8")
-
-        elif lesson.modality == "spreadsheet":
-            metadata["exercise_type"] = "spreadsheet"
-            metadata["google_sheet_id"] = (
-                lesson.google_sheet_id or "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
-            )
-            metadata["copy_on_open"] = lesson.copy_on_open
-
-        elif lesson.modality == "drawing":
-            metadata["exercise_type"] = "drawing"
-            metadata["stroke_color"] = "#e11d48"
-            metadata["stroke_width"] = 4
-            # Write a valid transparent PNG image file
-            (lesson_dir / "question.png").write_bytes(TRANSPARENT_PNG_BYTES)
 
         (lesson_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -425,7 +277,7 @@ class AgenticCourseWorkflow:
         )
 
         # -------------------------------------------------------------------
-        # Step 4: Tool 4 - curate_solveit_course (via LLM or deterministic engine)
+        # Step 4: Tool 4 - curate_solveit_course (via LLM)
         # -------------------------------------------------------------------
         t4_start = time.time()
         course_title = f"{intent.topic.title()} with Solveit"
@@ -440,8 +292,12 @@ class AgenticCourseWorkflow:
 
         raw_lessons: list[dict[str, Any]] = []
 
-        # Attempt to consult LLM with the outputs of Tools 1, 2, and 3
-        if self.generate_text is not None or self.client is not None:
+        # Consult the LLM with the outputs of Tools 1, 2, and 3. If no model is
+        # configured or the model call fails / returns nothing, we REFUSE to
+        # publish rather than shipping generic, topic-ignoring placeholder
+        # lessons. Nothing is written to disk in those cases.
+        llm_available = self.generate_text is not None or self.client is not None
+        if llm_available:
             try:
                 guided_directive = ""
                 if getattr(learner_ctx, "exercise_format", "") == "guided_completion":
@@ -534,12 +390,42 @@ Return a JSON object with this exact shape:
                     course_desc = parsed_plan.get("description", course_desc)
                     narrative_arc = parsed_plan.get("narrative_arc", narrative_arc)
                     raw_lessons = parsed_plan.get("lessons", [])
-            except Exception:
-                # LLM rate-limited or unavailable; use deterministic Solveit synthesis
-                raw_lessons = []
+            except Exception as exc:
+                raise CourseGenerationError(
+                    "We couldn't build this course: the AI model call failed "
+                    f"({exc}). No course was published. Check your AI provider "
+                    "status and try again."
+                ) from exc
 
         if not raw_lessons:
-            raw_lessons = build_fallback_solveit_lessons(intent, learner_ctx, platform_tools)
+            if not llm_available:
+                raise CourseGenerationError(
+                    f"No AI model is configured, so we can't build a real course for "
+                    f"'{intent.topic}'. We refuse to publish placeholder lessons that "
+                    "ignore your topic. Nothing was written to disk. Configure an AI "
+                    "provider (Settings → AI Features) and try again."
+                )
+            raise CourseGenerationError(
+                f"The AI model returned no usable lessons for '{intent.topic}'. We "
+                "refuse to publish placeholder content. Nothing was written to disk — "
+                "please try again."
+            )
+
+        # A generated course may only publish code lessons: spreadsheet and drawing
+        # lessons need platform-owned assets (a real template sheet id, a real
+        # question image) that a text model cannot supply. Reject them instead of
+        # writing courses that depend on unowned or blank assets.
+        non_code = [
+            lesson.get("title") or f"lesson {idx}"
+            for idx, lesson in enumerate(raw_lessons, start=1)
+            if (lesson.get("modality") or "code") != "code"
+        ]
+        if non_code:
+            raise CourseGenerationError(
+                "The AI model proposed lessons that need assets it cannot supply "
+                f"(e.g. '{non_code[0]}'). Generated courses only publish runnable "
+                "code lessons. Nothing was written to disk — please try again."
+            )
 
         curated = curate_solveit_course(
             course_title=course_title,

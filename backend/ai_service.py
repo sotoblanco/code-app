@@ -1,9 +1,6 @@
-import json
 import os
-import re
 from typing import Any
 
-from learning_paths import LearningPath, parse_json_response
 from llm import (
     LLMSettings,
     apply_settings_to_env,
@@ -194,63 +191,6 @@ class AIService:
         )
         return (response.choices[0].message.content or "").strip()
 
-    def generate_exercise(self, prompt: str, language: str = "python") -> dict[str, Any]:
-        if not self.is_configured:
-            return {"error": "AI service not configured"}
-
-        full_prompt = f"""
-        You are an expert technical coding tutor. Your goal is to create a detailed, high-quality coding lesson and assignment for the topic: "{prompt}".
-        The target programming language is: **{language}**.
-
-        **CRITICAL INSTRUCTION**: You MUST write code ONLY in **{language}**.
-        - If {language} is "rust", you MUST use Rust syntax (fn, let, mut, impl). NEVER use Python syntax (def, indentation blocks).
-        - If {language} is "python", use Python syntax.
-
-        Please follow these guidelines:
-        1.  **Single Learning Objective**: Focus on teaching ONE specific concept clearly.
-        2.  **Explanation (Extremely Helpful)**:
-            *   Provide a clear, concept-first explanation.
-            *   **Examples**: Provide *generic* syntax examples that clearly show HOW to use the feature. (e.g., if teaching 'structs', show a generic struct definition).
-            *   **Why**: Explain *why* this feature exists and when to use it.
-            *   Keep the tone encouraging ("SocratiQ the Wise").
-        3.  **Assignment**:
-            *   Describe a specific, actionable task.
-            *   Be precise about what functions/structs need to be implemented.
-        4.  **Code Structure (Strict Compliance)**:
-            *   `starting_code`:
-                *   Must range from a simple function signature to a partial implementation (checking user level, assume beginner/intermediate).
-                *   **RUST**: Must NOT contain a `main` function. Just the `pub fn solve(...)` or similar library code.
-                *   Use `todo!()` macros in Rust or `pass` in Python for gaps.
-            *   `test_cases`:
-                *   **RUST**: MUST contain a full `fn main() {{ ... }}` that calls the user's function and asserts results.
-                *   **PYTHON**: Valid Python scripts with `assert`.
-
-        Provide the response in raw JSON format (no markdown code blocks) with the following structure:
-        {{
-            "title": "Lesson Title",
-            "explanation": "Markdown string for the explanation",
-            "assignment": "Markdown string for the assignment instructions",
-            "starting_code": "Code string for the user's editor",
-            "test_cases": "Code string for the hidden test runner"
-        }}
-        """
-        try:
-            text = self.complete(full_prompt)
-            json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                first_brace = text.find("{")
-                last_brace = text.rfind("}")
-                if first_brace != -1 and last_brace != -1:
-                    json_str = text[first_brace : last_brace + 1]
-                else:
-                    json_str = text
-            return json.loads(json_str)
-        except Exception as e:
-            print(f"Error parsing AI response: {e}")
-            return {"error": f"Failed to generate valid exercise data: {str(e)}"}
-
     def run_agentic_course_builder(
         self,
         topic: str,
@@ -265,54 +205,6 @@ class AIService:
             courses_dir=courses_dir,
         )
         return workflow.execute(topic=topic, materials=materials, username=username)
-
-    def plan_learning_path(self, topic: str, context: str) -> LearningPath:
-        if not self.is_configured:
-            raise RuntimeError("AI service not configured")
-
-        prompt = f"""
-You are designing a hands-on programming course for BaseLayer.
-The learner asked: {topic}
-
-Use the supplied platform and learner material as evidence. Do not invent imports
-that are unavailable in the platform capabilities. Return raw JSON only.
-
-Create 3 to 6 lessons. Each lesson must teach exactly one concept and follow
-Solveit: tiny toy data, expected result before execution, a micro-task worth 1-3
-logical lines, an inspect prompt, and a runnable Python starter/test/solution.
-Never put the solution in starter_code. Tests must assert the toy behavior and
-must pass against solution_code. Because BaseLayer runs `test.py` beside the
-learner's `main.py`, every test_code must import the learner's public function
-or class from `main` before calling it. Prefer simple examples that fit in
-working memory.
-
-JSON shape:
-{{
-  "title": "...",
-  "description": "...",
-  "lessons": [{{
-    "title": "...",
-    "objective": "...",
-    "toy_data": "...",
-    "expected_result": "...",
-    "micro_task": "...",
-    "inspect_prompt": "...",
-    "starter_code": "...",
-    "test_code": "...",
-    "solution_code": "...",
-    "source_refs": ["..."],
-    "skills": ["short skill tag"]
-  }}]
-}}
-
-GROUNDING CONTEXT:
-{context}
-"""
-        try:
-            path = LearningPath.model_validate(parse_json_response(self.complete(prompt)))
-            return path
-        except Exception as exc:
-            raise RuntimeError(f"Failed to create a valid learning path: {exc}") from exc
 
     def chat(
         self,

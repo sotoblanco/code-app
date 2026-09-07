@@ -11,14 +11,64 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from agentic_tools import (
     curate_solveit_course,
     get_context_learning,
     get_learning_intent,
     get_platform_content_tools,
 )
-from agentic_workflow import AgenticCourseWorkflow
+from agentic_workflow import (
+    AgenticCourseWorkflow,
+    CourseGenerationError,
+    materialize_curated_course,
+)
+from ai_service import AIService
 from routers.file_courses import parse_course
+
+
+def _llm_plan_json(topic: str) -> str:
+    """Deterministic fake LLM plan (code-only lessons grounded in numpy)."""
+    lesson_specs = [
+        (
+            "make_vec",
+            "import numpy as np\n\ndef make_vec():\n    return np.arange(3)\n",
+            "from main import make_vec\nassert make_vec().shape == (3,)\n",
+        ),
+        (
+            "broadcast_add",
+            "import numpy as np\n\ndef broadcast_add():\n    return np.arange(3) + 1\n",
+            "from main import broadcast_add\nassert broadcast_add().tolist() == [1, 2, 3]\n",
+        ),
+    ]
+    lessons = []
+    for i, (name, code, test_code) in enumerate(lesson_specs, start=1):
+        lessons.append(
+            {
+                "title": f"Lesson {i}: {name.replace('_', ' ').title()}",
+                "modality": "code",
+                "objective": f"Implement {name}() in 1-3 lines.",
+                "toy_data": "np.arange(3)",
+                "expected_result": "a length-3 array",
+                "micro_task": f"Write {name}() so it builds the toy vector.",
+                "inspect_prompt": "Run it and print the result's shape.",
+                "curiosity_prompt": "How would you vectorize the next step?",
+                "starter_code": code,
+                "test_code": test_code,
+                "solution_code": code,
+                "source_refs": ["Platform Sandbox"],
+                "skills": ["NumPy", "Shapes"],
+            }
+        )
+    return json.dumps(
+        {
+            "title": f"{topic} with Solveit",
+            "description": "Fake LLM plan for tests.",
+            "narrative_arc": "From toy data to verified code.",
+            "lessons": lessons,
+        }
+    )
 
 
 class TestTool1LearningIntent:
@@ -238,7 +288,11 @@ class TestAgenticWorkflowExecution:
         courses_dir.mkdir()
         monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
 
-        workflow = AgenticCourseWorkflow(courses_dir=courses_dir, data_dir=tmp_path / "data")
+        workflow = AgenticCourseWorkflow(
+            courses_dir=courses_dir,
+            data_dir=tmp_path / "data",
+            generate_text=lambda prompt: _llm_plan_json("Tensor Math and Broadcasting"),
+        )
         result = workflow.execute(
             topic="Tensor Math and Broadcasting",
             materials="import numpy as np\na = np.array([1, 2])",
@@ -275,12 +329,179 @@ class TestAgenticWorkflowExecution:
         assert len(parsed.lessons) == result.lesson_count
         assert parsed.lessons[0].slug.startswith("chapter1--lesson")
 
+    def test_end_to_end_course_never_contains_toy_or_unowned_assets(self, tmp_path, monkeypatch):
+        """Published generated courses must not contain the Google sample sheet id,
+        blank drawing placeholders, or spreadsheet/drawing exercise types."""
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        workflow = AgenticCourseWorkflow(
+            courses_dir=courses_dir,
+            data_dir=tmp_path / "data",
+            generate_text=lambda prompt: _llm_plan_json("NumPy broadcasting"),
+        )
+        result = workflow.execute(
+            topic="NumPy broadcasting and matrix multiplication",
+            materials="",
+            username="alex",
+        )
+
+        sample_sheet_id = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+        course_dir = courses_dir / result.slug
+        for text_file in course_dir.rglob("*.py"):
+            assert sample_sheet_id not in text_file.read_text(encoding="utf-8")
+        for metadata_file in course_dir.rglob("metadata.json"):
+            meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if "exercise_type" in meta:  # lesson-level metadata
+                assert meta["exercise_type"] == "code"
+            assert "google_sheet_id" not in meta
+        assert not list(course_dir.rglob("question.png"))
+
+    def test_materialize_refuses_spreadsheet_and_drawing_lessons(self, tmp_path):
+        """Even a curated set containing a spreadsheet/drawing lesson (e.g. one
+        carrying Google's public sample sheet id) is refused and never written."""
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+
+        code_lesson = {
+            "title": "Toy Code",
+            "modality": "code",
+            "objective": "obj",
+            "toy_data": "[1, 2, 3]",
+            "expected_result": "3",
+            "micro_task": "task",
+            "inspect_prompt": "inspect",
+            "curiosity_prompt": "curiosity",
+            "starter_code": "def f():\n    return [1, 2, 3]\n",
+            "test_code": "from main import f\nassert f() == [1, 2, 3]\n",
+            "solution_code": "def f():\n    return [1, 2, 3]\n",
+        }
+        spreadsheet_lesson = {
+            **code_lesson,
+            "title": "Sheets Toy",
+            "modality": "spreadsheet",
+            "google_sheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+            "copy_on_open": True,
+        }
+        drawing_lesson = {
+            **code_lesson,
+            "title": "Drawing Toy",
+            "modality": "drawing",
+            "question_image_desc": "A diagram",
+        }
+
+        curated = curate_solveit_course(
+            course_title="Toy mixed course",
+            course_description="desc",
+            narrative_arc="arc",
+            lessons=[code_lesson, spreadsheet_lesson],
+        )
+        with pytest.raises(CourseGenerationError, match="spreadsheet"):
+            materialize_curated_course(curated, courses_dir)
+        assert list(courses_dir.iterdir()) == []
+
+        curated_drawing = curate_solveit_course(
+            course_title="Toy drawing course",
+            course_description="desc",
+            narrative_arc="arc",
+            lessons=[drawing_lesson],
+        )
+        with pytest.raises(CourseGenerationError, match="drawing"):
+            materialize_curated_course(curated_drawing, courses_dir)
+        assert list(courses_dir.iterdir()) == []
+
+    def test_workflow_refuses_to_publish_when_no_llm_configured(self, tmp_path):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+
+        workflow = AgenticCourseWorkflow(courses_dir=courses_dir, data_dir=tmp_path / "data")
+        with pytest.raises(CourseGenerationError) as excinfo:
+            workflow.execute(
+                topic="NumPy broadcasting and matrix multiplication",
+                materials="",
+                username="alex",
+            )
+
+        assert "No AI model is configured" in str(excinfo.value)
+        assert list(courses_dir.iterdir()) == []
+
+    def test_workflow_refuses_to_publish_when_llm_returns_no_lessons(self, tmp_path):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+
+        workflow = AgenticCourseWorkflow(
+            courses_dir=courses_dir,
+            data_dir=tmp_path / "data",
+            generate_text=lambda prompt: "",
+        )
+        with pytest.raises(CourseGenerationError) as excinfo:
+            workflow.execute(topic="NumPy broadcasting", materials="", username="alex")
+
+        assert "no usable lessons" in str(excinfo.value)
+        assert list(courses_dir.iterdir()) == []
+
+    def test_workflow_refuses_to_publish_when_llm_raises(self, tmp_path):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+
+        def boom(prompt):
+            raise RuntimeError("provider is down")
+
+        workflow = AgenticCourseWorkflow(
+            courses_dir=courses_dir,
+            data_dir=tmp_path / "data",
+            generate_text=boom,
+        )
+        with pytest.raises(CourseGenerationError) as excinfo:
+            workflow.execute(topic="NumPy broadcasting", materials="", username="alex")
+
+        assert "provider is down" in str(excinfo.value)
+        assert list(courses_dir.iterdir()) == []
+
+    def test_workflow_refuses_non_code_lessons_from_llm(self, tmp_path):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+
+        bad_plan = json.dumps(
+            {
+                "title": "Bad",
+                "description": "bad",
+                "narrative_arc": "bad",
+                "lessons": [
+                    {
+                        "title": "Sheets magic",
+                        "modality": "spreadsheet",
+                        "objective": "obj",
+                        "toy_data": "cells",
+                        "expected_result": "1",
+                        "micro_task": "task",
+                        "inspect_prompt": "inspect",
+                        "curiosity_prompt": "curiosity",
+                    }
+                ],
+            }
+        )
+        workflow = AgenticCourseWorkflow(
+            courses_dir=courses_dir,
+            data_dir=tmp_path / "data",
+            generate_text=lambda prompt: bad_plan,
+        )
+        with pytest.raises(CourseGenerationError, match="assets"):
+            workflow.execute(topic="NumPy broadcasting", materials="", username="alex")
+
+        assert list(courses_dir.iterdir()) == []
+
     def test_fastapi_build_endpoint_uses_agentic_workflow(
         self, client, auth_headers, tmp_path: Path, monkeypatch
     ):
         courses_dir = tmp_path / "courses"
         courses_dir.mkdir()
         monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+        monkeypatch.setattr(AIService, "is_configured", property(lambda self: True))
+        monkeypatch.setattr(
+            AIService, "complete", lambda self, prompt: _llm_plan_json("vector calculus")
+        )
 
         with patch("routers.ai.COURSES_DIR", courses_dir):
             response = client.post(
@@ -303,3 +524,28 @@ class TestAgenticWorkflowExecution:
         assert "get_context_learning" in tools_called
         assert "get_platform_content_tools" in tools_called
         assert "curate_solveit_course" in tools_called
+
+    def test_fastapi_build_endpoint_refuses_and_writes_nothing_when_llm_down(
+        self, client, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+        monkeypatch.setattr(AIService, "is_configured", property(lambda self: False))
+
+        with patch("routers.ai.COURSES_DIR", courses_dir):
+            response = client.post(
+                "/ai/learning-path/build",
+                json={
+                    "topic": "NumPy broadcasting and matrix multiplication",
+                    "resources": [],
+                },
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 503, response.text
+        detail = response.json()["detail"]
+        assert "No AI model is configured" in detail
+        assert "NumPy broadcasting" in detail
+        # Nothing may be published as a fake course on the homepage.
+        assert list(courses_dir.iterdir()) == []

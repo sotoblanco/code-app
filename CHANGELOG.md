@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.39](https://github.com/sotoblanco/BaseLayer/compare/v0.1.38...v0.1.39) (2026-09-07)
+
+
+### Features
+
+* allow removing courses and lessons from catalog with protected course safeguards ([#84](https://github.com/sotoblanco/BaseLayer/issues/84)) ([#96](https://github.com/sotoblanco/BaseLayer/issues/96)) ([e0fac60](https://github.com/sotoblanco/BaseLayer/commit/e0fac608096d0a849e34cace18a2aa5549cc3dfd))
+
 ### [0.1.38](https://github.com/sotoblanco/BaseLayer/compare/v0.1.37...v0.1.38) (2026-09-07)
 
 

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.41](https://github.com/sotoblanco/BaseLayer/compare/v0.1.40...v0.1.41) (2026-09-07)
+
+
+### Performance
+
+* **docker:** optimize image sizes, layer caching, and build context exclusions ([#99](https://github.com/sotoblanco/BaseLayer/issues/99)) ([90b01ea](https://github.com/sotoblanco/BaseLayer/commit/90b01ea96b6d03bae8408e48140c4ddb257b13dc))
+
 ### [0.1.40](https://github.com/sotoblanco/BaseLayer/compare/v0.1.39...v0.1.40) (2026-09-07)
 
 

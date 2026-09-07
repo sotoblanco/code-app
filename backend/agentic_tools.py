@@ -22,13 +22,6 @@ MAX_MATERIAL_CHARS = 16_000
 MAX_LESSONS_PER_COURSE = 8
 MIN_LESSONS_PER_COURSE = 2
 
-# Standard 1x1 transparent PNG payload for drawing placeholders (valid binary PNG)
-TRANSPARENT_PNG_BYTES = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?"
-    b"\x03\x00\x08\xfc\x02\xfe\xa7\x9a\xa0\xa0\x00\x00\x00\x00IEND\xaeB`\x82"
-)
-
 
 # ---------------------------------------------------------------------------
 # Pydantic Schemas for Tool I/O

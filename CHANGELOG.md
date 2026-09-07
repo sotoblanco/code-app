@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.36](https://github.com/sotoblanco/BaseLayer/compare/v0.1.35...v0.1.36) (2026-09-07)
+
+
+### Bug Fixes
+
+* **ai:** refuse to publish toy courses when generation fails ([#74](https://github.com/sotoblanco/BaseLayer/issues/74)) ([#91](https://github.com/sotoblanco/BaseLayer/issues/91)) ([50025fb](https://github.com/sotoblanco/BaseLayer/commit/50025fbfe1bf23094500ad8bfea5ecd1535c3a97))
+
 ### [0.1.35](https://github.com/sotoblanco/BaseLayer/compare/v0.1.34...v0.1.35) (2026-09-07)
 
 

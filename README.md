@@ -59,7 +59,6 @@ With a provider configured:
 - **SocratiQ** — chat tutor (Solveit / Beginner / Intermediate / Advanced / Bloom’s)
 - **Agentic Course Builder** — 4-step tool-calling workflow generating micro-step courses from any topic
 - **Drawing grades** — intent, not pixel-perfect match (needs a vision-capable model)
-- **Exercise generation** — admin `POST /ai/generate/exercise`
 
 Without a provider, code execution and spreadsheets still work. Configure in the Local Studio **AI Features** tab or `.env`. `GEMINI_API_KEY` still works.
 

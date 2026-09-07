@@ -1302,3 +1302,112 @@ class TestShareExportImport:
         assert _encode_image_file_base64(f) is None
         f.write_bytes(b"hello")
         assert _encode_image_file_base64(f) == "aGVsbG8="
+
+
+class TestDeleteFileCourses:
+    """Tests for DELETE /file-courses/{course_slug} and /{lesson_slug} (Issue #84)."""
+
+    def test_delete_generated_course_success_and_cleans_profile(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        # Create generated course
+        course_dir = courses_dir / "generated-ai-math"
+        course_dir.mkdir()
+        lesson_dir = course_dir / "chapter1" / "lesson01"
+        lesson_dir.mkdir(parents=True)
+        (lesson_dir / "README.md").write_text("# Math")
+        (lesson_dir / "main.py").write_text("pass")
+
+        # Create learner profile with entries
+        learners_dir = tmp_path / "learners"
+        monkeypatch.setenv("LEARNERS_DATA_DIR", str(learners_dir))
+        user_dir = learners_dir / "testuser"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        profile_content = """---
+username: testuser
+---
+# Profile
+
+## Courses built
+- **generated-ai-math** — authored 'Math' (1 lessons).
+
+## Courses taken
+- **generated-ai-math** — chapter 1
+- **tinytorch** — chapter 1
+"""
+        (user_dir / "LEARNING.md").write_text(profile_content)
+
+        # Delete the course
+        res = client.delete("/file-courses/generated-ai-math", headers=auth_headers)
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+        assert not course_dir.exists()
+
+        # Check LEARNING.md references were purged
+        updated_profile = (user_dir / "LEARNING.md").read_text()
+        assert "generated-ai-math" not in updated_profile
+        assert "tinytorch" in updated_profile
+
+    def test_delete_protected_courses_rejected_with_403(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        for core in ("tinytorch", "data-modeling", "pytorch", "llms-from-scratch"):
+            c_dir = courses_dir / core
+            c_dir.mkdir()
+            res = client.delete(f"/file-courses/{core}", headers=auth_headers)
+            assert res.status_code == 403
+            assert f"Cannot remove core platform course '{core}'" in res.json()["detail"]
+            assert c_dir.exists()
+
+    def test_delete_nonexistent_course_returns_404(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        res = client.delete("/file-courses/ghost-course-123", headers=auth_headers)
+        assert res.status_code == 404
+
+        # Bad slug format
+        res_bad = client.delete("/file-courses/bad*slug!", headers=auth_headers)
+        assert res_bad.status_code == 400
+
+    def test_delete_single_lesson_success(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        course_dir = courses_dir / "custom-path"
+        course_dir.mkdir()
+        l1 = course_dir / "chapter1" / "lesson01"
+        l1.mkdir(parents=True)
+        (l1 / "README.md").write_text("# L1")
+        l2 = course_dir / "chapter1" / "lesson02"
+        l2.mkdir(parents=True)
+        (l2 / "README.md").write_text("# L2")
+
+        res = client.delete("/file-courses/custom-path/chapter1--lesson02", headers=auth_headers)
+        assert res.status_code == 200
+        assert not l2.exists()
+        assert l1.exists()
+
+        # Deleting lesson in core course rejected with 403
+        res_core = client.delete("/file-courses/tinytorch/chapter1--lesson01", headers=auth_headers)
+        assert res_core.status_code == 403
+
+        # Nonexistent lesson 404
+        res_ghost_lesson = client.delete(
+            "/file-courses/custom-path/chapter1--ghost_lesson", headers=auth_headers
+        )
+        assert res_ghost_lesson.status_code == 404

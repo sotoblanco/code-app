@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -837,6 +838,93 @@ def export_single_lesson_bundle(
         kind="lesson",
         course_slug=course_slug,
         lesson=bundle,
+    )
+
+
+PROTECTED_COURSES = frozenset({"tinytorch", "data-modeling", "pytorch", "llms-from-scratch"})
+
+
+class DeleteCourseResponse(BaseModel):
+    status: str = "success"
+    course_slug: str
+    message: str
+
+
+class DeleteLessonResponse(BaseModel):
+    status: str = "success"
+    course_slug: str
+    lesson_slug: str
+    message: str
+
+
+def _is_protected_course(course_slug: str) -> bool:
+    return course_slug.lower().strip() in PROTECTED_COURSES
+
+
+def _require_unprotected_course(course_slug: str) -> None:
+    if _is_protected_course(course_slug):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot remove core platform course '{course_slug}'.",
+        )
+
+
+def _clean_learner_profile_references(course_slug: str) -> None:
+    try:
+        from learner_profile import remove_course_from_learner_profiles
+
+        remove_course_from_learner_profiles(course_slug)
+    except Exception:
+        pass
+
+
+def _delete_course_tree(course_path: Path | None, course_slug: str) -> None:
+    if not course_path or not course_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"Course '{course_slug}' not found")
+    try:
+        shutil.rmtree(course_path)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete course: {exc}") from exc
+
+
+@router.delete("/{course_slug}", response_model=DeleteCourseResponse)
+def delete_file_course(course_slug: str, user: User = Depends(get_current_user)):
+    """Remove a generated or imported course and its files from the catalog (Issue #84)."""
+    if not _validate_slug(course_slug):
+        raise HTTPException(status_code=400, detail="Invalid course slug format")
+    _require_unprotected_course(course_slug)
+
+    course_path = _get_safe_course_dir(course_slug)
+    _delete_course_tree(course_path, course_slug)
+    _clean_learner_profile_references(course_slug)
+
+    return DeleteCourseResponse(
+        status="success",
+        course_slug=course_slug,
+        message=f"Course '{course_slug}' removed successfully.",
+    )
+
+
+@router.delete("/{course_slug}/{lesson_slug}", response_model=DeleteLessonResponse)
+def delete_file_lesson(course_slug: str, lesson_slug: str, user: User = Depends(get_current_user)):
+    """Remove a lesson from a course directory (Issue #84)."""
+    _require_valid_slugs(course_slug, lesson_slug)
+    _require_unprotected_course(course_slug)
+
+    lesson_dir = get_lesson_path(course_slug, lesson_slug)
+    if not lesson_dir or not lesson_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Lesson '{lesson_slug}' not found")
+
+    try:
+        shutil.rmtree(lesson_dir)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete lesson: {exc}") from exc
+
+    return DeleteLessonResponse(
+        status="success",
+        course_slug=course_slug,
+        lesson_slug=lesson_slug,
+        message=f"Lesson '{lesson_slug}' removed successfully.",
     )
 
 

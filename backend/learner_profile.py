@@ -529,6 +529,50 @@ def _handle_course_authored(sections: dict[str, list[str]], payload: dict[str, A
     sections["Courses built"] = built
 
 
+def _filter_removed_course_lines(lines: list[str], prefix: str) -> list[str]:
+    return [line for line in lines if not line.strip().startswith(prefix)]
+
+
+def _handle_course_removed(sections: dict[str, list[str]], payload: dict[str, Any]) -> None:
+    course_slug = payload.get("course_slug", "").strip()
+    if not course_slug:
+        return
+    prefix = f"- **{course_slug}**"
+    if "Courses built" in sections:
+        sections["Courses built"] = _filter_removed_course_lines(sections["Courses built"], prefix)
+    if "Courses taken" in sections:
+        sections["Courses taken"] = _filter_removed_course_lines(sections["Courses taken"], prefix)
+
+
+def _clean_user_profile_file(user_dir: Path, clean_slug: str, root: Path) -> None:
+    profile_file = user_dir / "LEARNING.md"
+    if not user_dir.is_dir() or not profile_file.is_file():
+        return
+    try:
+        content = profile_file.read_text(encoding="utf-8")
+        if f"- **{clean_slug}**" in content:
+            record_learner_event(
+                username=user_dir.name,
+                event_type="course_removed",
+                payload={"course_slug": clean_slug},
+                base_dir=root,
+            )
+    except OSError:
+        pass
+
+
+def remove_course_from_learner_profiles(course_slug: str, base_dir: Path | None = None) -> None:
+    """Strip references to course_slug from all learner profiles on disk."""
+    clean_slug = course_slug.strip()
+    if not clean_slug:
+        return
+    root = base_dir if base_dir is not None else get_learners_data_dir()
+    if not root.is_dir():
+        return
+    for user_dir in root.iterdir():
+        _clean_user_profile_file(user_dir, clean_slug, root)
+
+
 def _dispatch_learner_event(
     event_type: str,
     fm: LearnerFrontMatter,
@@ -542,6 +586,7 @@ def _dispatch_learner_event(
         "lesson_passed": lambda: _handle_lesson_passed(sections, payload),
         "tutor_level_changed": lambda: _handle_tutor_level_changed(fm, payload),
         "course_authored": lambda: _handle_course_authored(sections, payload),
+        "course_removed": lambda: _handle_course_removed(sections, payload),
     }
     handler = handlers.get(event_type)
     if handler:

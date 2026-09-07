@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, ChevronRight, FolderCode, Database, Compass, Sliders, CheckCircle2 } from 'lucide-react';
+import { Terminal, ChevronRight, FolderCode, Database, Compass, Sliders, CheckCircle2, Upload, Share2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL, APP_VERSION } from '../config';
 import { UserMenu } from '../components/UserMenu';
 import { WelcomeGate } from '../components/auth/WelcomeGate';
 import CourseBuilder from '../components/CourseBuilder';
 import { LearningProfileModal } from '../components/LearningProfileModal';
+import { ShareModal } from '../components/ShareModal';
+import { ImportModal } from '../components/ImportModal';
 import { getLearningProfile, fetchMyProgress, type CourseProgressSummary } from '../services/profileService';
 import { isLocalHost } from '../isLocalHost';
 
@@ -45,8 +47,23 @@ export default function CoursesPage() {
   const [isCourseBuilderOpen, setIsCourseBuilderOpen] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [profileInitialMode, setProfileInitialMode] = useState<'preview' | 'edit' | 'customize'>('customize');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importInitialData, setImportInitialData] = useState<string | null>(null);
+  const [shareModalData, setShareModalData] = useState<{
+    courseSlug: string;
+    lessonSlug?: string | null;
+    title: string;
+  } | null>(null);
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash && (hash.includes('#import=') || hash.includes('#share='))) {
+      setImportInitialData(hash);
+      setIsImportModalOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated && isLocalHost()) {
@@ -226,12 +243,22 @@ export default function CoursesPage() {
               <h2 className="mb-2 text-3xl font-bold">What do you want to learn?</h2>
               <p className="max-w-xl text-slate-400">Ask for a topic and optionally add notes. BaseLayer will create a runnable course using tiny Solveit steps.</p>
             </div>
-            <button
-              onClick={() => isAuthenticated ? setIsCourseBuilderOpen(true) : setIsAuthModalOpen(true)}
-              className="shrink-0 rounded-lg bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 transition-colors hover:bg-emerald-400"
-            >
-              Build a course
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={() => (isAuthenticated ? setIsImportModalOpen(true) : setIsAuthModalOpen(true))}
+                className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/90 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 hover:text-white"
+                title="Import a shared course or lesson bundle"
+              >
+                <Upload size={16} className="text-blue-400" />
+                <span>Import Course</span>
+              </button>
+              <button
+                onClick={() => (isAuthenticated ? setIsCourseBuilderOpen(true) : setIsAuthModalOpen(true))}
+                className="rounded-lg bg-emerald-500 px-5 py-3 text-sm font-bold text-slate-950 transition-colors hover:bg-emerald-400"
+              >
+                Build a course
+              </button>
+            </div>
           </div>
           <div className="mt-8 flex items-end justify-between">
             <div>
@@ -286,15 +313,34 @@ export default function CoursesPage() {
                       >
                         {course.type === 'file' ? <FolderCode size={24} /> : <Database size={24} />}
                       </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full font-medium border ${
-                          course.type === 'file'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                        }`}
-                      >
-                        {course.type === 'file' ? 'File' : 'Database'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {course.type === 'file' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const cleanSlug = course.id.replace(/^file-/, '');
+                              setShareModalData({
+                                courseSlug: cleanSlug,
+                                title: course.title,
+                              });
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-700"
+                            title="Share or export this course"
+                          >
+                            <Share2 size={14} />
+                          </button>
+                        )}
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full font-medium border ${
+                            course.type === 'file'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                              : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                          }`}
+                        >
+                          {course.type === 'file' ? 'File' : 'Database'}
+                        </span>
+                      </div>
                     </div>
 
                     <h3
@@ -405,6 +451,26 @@ export default function CoursesPage() {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         initialMode={profileInitialMode}
+      />
+      {shareModalData && (
+        <ShareModal
+          isOpen={true}
+          onClose={() => setShareModalData(null)}
+          courseSlug={shareModalData.courseSlug}
+          lessonSlug={shareModalData.lessonSlug}
+          title={shareModalData.title}
+        />
+      )}
+      <ImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportInitialData(null);
+          if (window.location.hash.includes('#import') || window.location.hash.includes('#share')) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }}
+        initialData={importInitialData}
       />
     </div>
   );

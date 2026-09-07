@@ -14,6 +14,7 @@ import { FlagReportModal } from './components/FlagReportModal';
 import { DrawingPane } from './components/DrawingPane';
 import { SpreadsheetPane } from './components/SpreadsheetPane';
 import { ShareAchievement } from './components/ShareAchievement';
+import { ShareModal } from '../components/ShareModal';
 import { groupLessonsIntoChapters, flattenLessons } from './courseLoader';
 import { emitLearnerEvent, fetchMyProgress } from '../services/profileService';
 import { findLessonPosition, useLessonUrlSync } from '../lessonUrl';
@@ -70,6 +71,7 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [isEmbedOpen, setIsEmbedOpen] = useState(false);
   const [isFlagOpen, setIsFlagOpen] = useState(false);
+  const [isShareBundleOpen, setIsShareBundleOpen] = useState(false);
   const [sharePayload, setSharePayload] = useState<SharePayload | null>(null);
 
   const [userSheetUrl, setUserSheetUrl] = useState('');
@@ -604,6 +606,7 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
         onSwitchUi={onSwitchUi}
         onShare={() => openShare(completedIds.size >= allLessons.length ? 'course' : 'lesson')}
         canShare={completedIds.has(displayLesson.slug)}
+        onShareBundle={() => setIsShareBundleOpen(true)}
       />
 
       <main className="flex-1 overflow-hidden min-h-0">
@@ -686,6 +689,15 @@ export default function UXLightPage({ onSwitchUi }: { onSwitchUi?: () => void })
                 : undefined
           }
           nextLabel={sharePayload.kind === 'course' ? 'Back to courses' : 'Next Exercise'}
+        />
+      )}
+      {isShareBundleOpen && course && displayLesson && (
+        <ShareModal
+          isOpen={true}
+          onClose={() => setIsShareBundleOpen(false)}
+          courseSlug={course.slug}
+          lessonSlug={displayLesson.slug}
+          title={displayLesson.title}
         />
       )}
       <WelcomeGate isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />

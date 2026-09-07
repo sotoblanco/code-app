@@ -17,7 +17,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -141,6 +141,66 @@ class FileCourse(BaseModel):
     description: str
     lessons: list[FileLesson]
     skills: list[str] = Field(default_factory=list)
+
+
+class ExportLessonBundle(BaseModel):
+    title: str
+    slug: str
+    order: int = 1
+    chapter: str | None = None
+    exercise_type: str = "code"
+    language: str = "python"
+    description: str = ""
+    initial_code: str = ""
+    test_code: str = ""
+    solution_code: str = ""
+    skills: list[str] = Field(default_factory=list)
+    google_sheet_id: str | None = None
+    copy_on_open: bool = False
+    stroke_color: str = "#e11d48"
+    stroke_width: int = 4
+    hints: list[str] = Field(default_factory=list)
+    question_image_base64: str | None = None
+    solution_image_base64: str | None = None
+
+
+class ExportCourseBundle(BaseModel):
+    version: int = 1
+    kind: Literal["course", "lesson"] = "course"
+    slug: str
+    title: str
+    description: str = ""
+    skills: list[str] = Field(default_factory=list)
+    lessons: list[ExportLessonBundle] = Field(default_factory=list)
+
+
+class SingleLessonShareBundle(BaseModel):
+    version: int = 1
+    kind: Literal["lesson"] = "lesson"
+    course_slug: str = "shared-lessons"
+    lesson: ExportLessonBundle
+
+
+class ImportBundleRequest(BaseModel):
+    version: int = 1
+    kind: Literal["course", "lesson"] = "course"
+    slug: str | None = None
+    title: str | None = None
+    description: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    lessons: list[ExportLessonBundle] = Field(default_factory=list)
+    lesson: ExportLessonBundle | None = None
+    target_course_slug: str | None = None
+
+
+class ImportBundleResponse(BaseModel):
+    status: str = "success"
+    kind: Literal["course", "lesson"]
+    course_slug: str
+    lesson_slug: str
+    title: str
+    lesson_count: int
+    message: str
 
 
 def get_course_title(slug: str) -> str:
@@ -451,20 +511,6 @@ def _find_lesson_in_course_or_404(course: FileCourse, lesson_slug: str) -> FileL
     )
 
 
-@router.get("/{course_slug}", response_model=FileCourse)
-def get_file_course(course_slug: str, user: User = Depends(get_current_user)):
-    """Get a specific file-based course with all its lessons"""
-    return _get_course_or_404(course_slug)
-
-
-@router.get("/{course_slug}/{lesson_slug}", response_model=FileLesson)
-def get_file_lesson(course_slug: str, lesson_slug: str, user: User = Depends(get_current_user)):
-    """Get a specific lesson from a file-based course"""
-    _require_valid_slugs(course_slug, lesson_slug)
-    course = _get_course_or_404(course_slug)
-    return _find_lesson_in_course_or_404(course, lesson_slug)
-
-
 def _get_safe_course_dir(course_slug: str) -> Path | None:
     if not _validate_slug(course_slug):
         return None
@@ -503,6 +549,309 @@ def get_lesson_path(course_slug: str, lesson_slug: str) -> Path | None:
     if not course_path:
         return None
     return _find_lesson_in_course_dir(course_path, lesson_slug)
+
+
+def _encode_image_file_base64(path: Path) -> str | None:
+    if path.is_file():
+        try:
+            return base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            return None
+    return None
+
+
+def _decode_image_base64_safely(data: str | None) -> bytes | None:
+    if not data:
+        return None
+    try:
+        raw = data.split(",", 1)[1] if "," in data else data
+        return base64.b64decode(raw)
+    except Exception:
+        return None
+
+
+def _extract_lesson_solution(lesson_dir: Path | None) -> str:
+    if not lesson_dir or not lesson_dir.is_dir():
+        return ""
+    _lang, _m, _t, sol_path = _detect_language_and_files(lesson_dir)
+    return read_file_content(sol_path) if sol_path.is_file() else ""
+
+
+def _extract_lesson_images(lesson_dir: Path | None) -> tuple[str | None, str | None]:
+    if not lesson_dir or not lesson_dir.is_dir():
+        return None, None
+    q_img = _encode_image_file_base64(lesson_dir / "question.png")
+    s_img = _encode_image_file_base64(lesson_dir / "solution.png")
+    return q_img, s_img
+
+
+def _lesson_to_export_bundle(course_path: Path, lesson: FileLesson) -> ExportLessonBundle:
+    lesson_dir = _find_lesson_in_course_dir(course_path, lesson.slug)
+    solution_code = _extract_lesson_solution(lesson_dir)
+    q_img, s_img = _extract_lesson_images(lesson_dir)
+    return ExportLessonBundle(
+        title=lesson.title,
+        slug=lesson.slug,
+        order=lesson.order,
+        chapter=lesson.chapter,
+        exercise_type=lesson.exercise_type,
+        language=lesson.language,
+        description=lesson.description,
+        initial_code=lesson.initial_code,
+        test_code=lesson.test_code,
+        solution_code=solution_code,
+        skills=lesson.skills,
+        google_sheet_id=lesson.google_sheet_id,
+        copy_on_open=lesson.copy_on_open,
+        stroke_color=lesson.stroke_color,
+        stroke_width=lesson.stroke_width,
+        hints=lesson.hints,
+        question_image_base64=q_img,
+        solution_image_base64=s_img,
+    )
+
+
+def _sanitize_slug(raw: str, default: str = "imported") -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw.strip()).strip("-").lower()
+    return cleaned[:50] or default
+
+
+def _pick_safe_import_course_dir(base_slug: str) -> tuple[str, Path]:
+    slug = _sanitize_slug(base_slug, "imported-course")
+    target = COURSES_DIR / slug
+    if not target.exists():
+        return slug, target
+    target_imported = COURSES_DIR / f"{slug}-imported"
+    if not target_imported.exists():
+        return f"{slug}-imported", target_imported
+    suffix = int(time.time()) % 10000
+    unique_slug = f"{slug}-{suffix}"
+    return unique_slug, COURSES_DIR / unique_slug
+
+
+_CODE_FILE_EXTENSIONS: dict[str, tuple[str, str, str]] = {
+    "rust": ("main.rs", "test.rs", "solution.rs"),
+    "python": ("main.py", "test.py", "solution.py"),
+}
+
+
+def _write_code_files(lesson_dir: Path, lesson: ExportLessonBundle) -> None:
+    names = _CODE_FILE_EXTENSIONS.get(lesson.language, _CODE_FILE_EXTENSIONS["python"])
+    code_text = lesson.initial_code if lesson.initial_code else "# Start here\n"
+    test_text = lesson.test_code if lesson.test_code else "assert True\n"
+    (lesson_dir / names[0]).write_text(code_text, encoding="utf-8")
+    (lesson_dir / names[1]).write_text(test_text, encoding="utf-8")
+    if lesson.solution_code:
+        (lesson_dir / names[2]).write_text(lesson.solution_code, encoding="utf-8")
+
+
+def _write_drawing_files(lesson_dir: Path, lesson: ExportLessonBundle) -> None:
+    q_bytes = _decode_image_base64_safely(lesson.question_image_base64)
+    if q_bytes:
+        (lesson_dir / "question.png").write_bytes(q_bytes)
+    s_bytes = _decode_image_base64_safely(lesson.solution_image_base64)
+    if s_bytes:
+        (lesson_dir / "solution.png").write_bytes(s_bytes)
+
+
+def _write_exercise_specific_files(lesson_dir: Path, lesson: ExportLessonBundle) -> None:
+    if lesson.exercise_type == "code":
+        _write_code_files(lesson_dir, lesson)
+    elif lesson.exercise_type == "drawing":
+        _write_drawing_files(lesson_dir, lesson)
+
+
+def _write_lesson_bundle_files(lesson_dir: Path, lesson: ExportLessonBundle) -> None:
+    lesson_dir.mkdir(parents=True, exist_ok=True)
+    readme_content = lesson.description or f"# {lesson.title}\n"
+    (lesson_dir / "README.md").write_text(readme_content, encoding="utf-8")
+    meta: dict[str, Any] = {
+        "exercise_type": lesson.exercise_type,
+        "skills": lesson.skills,
+        "title": lesson.title,
+        "google_sheet_id": lesson.google_sheet_id,
+        "copy_on_open": lesson.copy_on_open,
+        "stroke_color": lesson.stroke_color,
+        "stroke_width": lesson.stroke_width,
+        "hints": lesson.hints,
+    }
+    (lesson_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    _write_exercise_specific_files(lesson_dir, lesson)
+
+
+def _materialize_course_lessons(target_dir: Path, lessons: list[ExportLessonBundle]) -> str:
+    first_slug = ""
+    for idx, les in enumerate(lessons, start=1):
+        clean_ch = _sanitize_slug(les.chapter or "chapter1", "chapter1")
+        clean_l_slug = _sanitize_slug(les.slug or f"lesson{idx:02d}", f"lesson{idx:02d}")
+        _write_lesson_bundle_files(target_dir / clean_ch / clean_l_slug, les)
+        if not first_slug:
+            first_slug = f"{clean_ch}--{clean_l_slug}"
+    return first_slug
+
+
+def _course_base_name(bundle: ImportBundleRequest) -> str:
+    if bundle.slug:
+        return bundle.slug
+    if bundle.title:
+        return bundle.title
+    return "imported-course"
+
+
+def _write_course_root_metadata(target_dir: Path, title: str, desc: str, skills: list[str]) -> None:
+    (target_dir / "README.md").write_text(f"# {title}\n\n{desc}\n", encoding="utf-8")
+    meta = {"title": title, "skills": skills, "description": desc}
+    (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def _import_course_bundle(bundle: ImportBundleRequest) -> ImportBundleResponse:
+    if not bundle.lessons:
+        raise HTTPException(
+            status_code=400, detail="Course bundle must contain at least one lesson."
+        )
+
+    base = _course_base_name(bundle)
+    course_slug, target_dir = _pick_safe_import_course_dir(base)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    title = bundle.title or get_course_title(course_slug)
+    desc = bundle.description or f"Learn {title}"
+    _write_course_root_metadata(target_dir, title, desc, bundle.skills)
+
+    first_slug = _materialize_course_lessons(target_dir, bundle.lessons)
+    return ImportBundleResponse(
+        status="success",
+        kind="course",
+        course_slug=course_slug,
+        lesson_slug=first_slug,
+        title=title,
+        lesson_count=len(bundle.lessons),
+        message=f"Course '{title}' imported successfully.",
+    )
+
+
+def _import_lesson_into_existing_course(
+    target_course_slug: str, lesson: ExportLessonBundle
+) -> ImportBundleResponse:
+    course_dir = _get_safe_course_dir(target_course_slug)
+    if not course_dir:
+        raise HTTPException(
+            status_code=404, detail=f"Target course '{target_course_slug}' not found."
+        )
+    clean_ch = _sanitize_slug(lesson.chapter or "chapter1", "chapter1")
+    clean_l = _sanitize_slug(lesson.slug or "lesson-imported", "lesson-imported")
+    _write_lesson_bundle_files(course_dir / clean_ch / clean_l, lesson)
+    return ImportBundleResponse(
+        status="success",
+        kind="lesson",
+        course_slug=target_course_slug,
+        lesson_slug=f"{clean_ch}--{clean_l}",
+        title=lesson.title,
+        lesson_count=1,
+        message=f"Lesson '{lesson.title}' imported into '{target_course_slug}'.",
+    )
+
+
+def _extract_lesson_summary_desc(lesson: ExportLessonBundle, title: str) -> str:
+    if lesson.description:
+        return lesson.description.splitlines()[0].lstrip("#").strip()
+    return f"Learn {title}"
+
+
+def _import_lesson_as_new_course(lesson: ExportLessonBundle) -> ImportBundleResponse:
+    clean_base = f"shared-{_sanitize_slug(lesson.slug or lesson.title or 'lesson', 'lesson')}"
+    course_slug, course_dir = _pick_safe_import_course_dir(clean_base)
+    course_dir.mkdir(parents=True, exist_ok=True)
+    title = lesson.title or get_course_title(course_slug)
+    desc = _extract_lesson_summary_desc(lesson, title)
+    _write_course_root_metadata(course_dir, title, desc, lesson.skills)
+
+    clean_l = _sanitize_slug(lesson.slug or "lesson01", "lesson01")
+    _write_lesson_bundle_files(course_dir / "chapter1" / clean_l, lesson)
+    return ImportBundleResponse(
+        status="success",
+        kind="lesson",
+        course_slug=course_slug,
+        lesson_slug=f"chapter1--{clean_l}",
+        title=title,
+        lesson_count=1,
+        message=f"Lesson '{title}' imported successfully.",
+    )
+
+
+def _import_single_lesson_bundle(bundle: ImportBundleRequest) -> ImportBundleResponse:
+    lesson = bundle.lesson or (bundle.lessons[0] if bundle.lessons else None)
+    if not lesson:
+        raise HTTPException(status_code=400, detail="Lesson bundle must contain lesson data.")
+
+    if bundle.target_course_slug:
+        return _import_lesson_into_existing_course(bundle.target_course_slug, lesson)
+    return _import_lesson_as_new_course(lesson)
+
+
+@router.post("/import", response_model=ImportBundleResponse)
+def import_course_or_lesson_bundle(
+    bundle: ImportBundleRequest, user: User = Depends(get_current_user)
+):
+    """Import a shared course or single lesson into the platform."""
+    if bundle.kind == "lesson" or (bundle.lesson is not None and not bundle.lessons):
+        return _import_single_lesson_bundle(bundle)
+    return _import_course_bundle(bundle)
+
+
+@router.get("/{course_slug}/export", response_model=ExportCourseBundle)
+def export_course_bundle(course_slug: str, user: User = Depends(get_current_user)):
+    """Export an entire course with all lessons into a portable JSON bundle."""
+    course = _get_course_or_404(course_slug)
+    course_path = _get_safe_course_dir(course_slug)
+    if not course_path:
+        raise HTTPException(status_code=404, detail="Course directory not found")
+
+    bundles = [_lesson_to_export_bundle(course_path, item) for item in course.lessons]
+    return ExportCourseBundle(
+        version=1,
+        kind="course",
+        slug=course.slug,
+        title=course.title,
+        description=course.description,
+        skills=course.skills,
+        lessons=bundles,
+    )
+
+
+@router.get("/{course_slug}/{lesson_slug}/export", response_model=SingleLessonShareBundle)
+def export_single_lesson_bundle(
+    course_slug: str, lesson_slug: str, user: User = Depends(get_current_user)
+):
+    """Export a single lesson into a portable JSON bundle for sharing."""
+    _require_valid_slugs(course_slug, lesson_slug)
+    course = _get_course_or_404(course_slug)
+    lesson = _find_lesson_in_course_or_404(course, lesson_slug)
+    course_path = _get_safe_course_dir(course_slug)
+    if not course_path:
+        raise HTTPException(status_code=404, detail="Course directory not found")
+
+    bundle = _lesson_to_export_bundle(course_path, lesson)
+    return SingleLessonShareBundle(
+        version=1,
+        kind="lesson",
+        course_slug=course_slug,
+        lesson=bundle,
+    )
+
+
+@router.get("/{course_slug}", response_model=FileCourse)
+def get_file_course(course_slug: str, user: User = Depends(get_current_user)):
+    """Get a specific file-based course with all its lessons"""
+    return _get_course_or_404(course_slug)
+
+
+@router.get("/{course_slug}/{lesson_slug}", response_model=FileLesson)
+def get_file_lesson(course_slug: str, lesson_slug: str, user: User = Depends(get_current_user)):
+    """Get a specific lesson from a file-based course"""
+    _require_valid_slugs(course_slug, lesson_slug)
+    course = _get_course_or_404(course_slug)
+    return _find_lesson_in_course_or_404(course, lesson_slug)
 
 
 def _get_safe_lesson_dir_or_404(course_slug: str, lesson_slug: str) -> Path:

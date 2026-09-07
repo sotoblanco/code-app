@@ -1055,3 +1055,250 @@ class TestSpreadsheetVerification:
         missing = grade_sheet(cells, {"A1": "nope"})
         assert missing.passed is False
         assert missing.checks[1].actual is None
+
+
+class TestShareExportImport:
+    """Tests for Course and Lesson export, sharing, and importing."""
+
+    def test_export_course_bundle(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        course_dir = courses_dir / "exportable"
+        course_dir.mkdir()
+        (course_dir / "README.md").write_text("# Exportable Course\nA nice course to export.")
+        (course_dir / "metadata.json").write_text(
+            json.dumps({"title": "Exportable Course", "skills": ["Python", "Math"]})
+        )
+        lesson_dir = course_dir / "chapter1" / "lesson01"
+        lesson_dir.mkdir(parents=True)
+        (lesson_dir / "README.md").write_text("# Lesson 1: Basics")
+        (lesson_dir / "main.py").write_text("x = 10")
+        (lesson_dir / "test.py").write_text("from main import x\nassert x == 10")
+        (lesson_dir / "solution.py").write_text("x = 10\n")
+        (lesson_dir / "metadata.json").write_text(
+            json.dumps({"exercise_type": "code", "skills": ["Basics"]})
+        )
+
+        res = client.get("/file-courses/exportable/export", headers=auth_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["kind"] == "course"
+        assert data["slug"] == "exportable"
+        assert data["title"] == "Exportable Course"
+        assert len(data["lessons"]) == 1
+        assert data["lessons"][0]["title"] == "Lesson 1: Basics"
+        assert data["lessons"][0]["solution_code"] == "x = 10\n"
+
+        # Not found course
+        res404 = client.get("/file-courses/ghost_course_xyz/export", headers=auth_headers)
+        assert res404.status_code == 404
+
+    def test_export_single_lesson_bundle(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        course_dir = courses_dir / "share_course"
+        course_dir.mkdir()
+        lesson_dir = course_dir / "chapter1" / "lesson02"
+        lesson_dir.mkdir(parents=True)
+        (lesson_dir / "README.md").write_text("# Lesson 2: Single Share")
+        (lesson_dir / "main.py").write_text("def solve(): return True")
+        (lesson_dir / "test.py").write_text("assert True")
+        (lesson_dir / "metadata.json").write_text(json.dumps({"exercise_type": "code"}))
+
+        res = client.get(
+            "/file-courses/share_course/chapter1--lesson02/export", headers=auth_headers
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["kind"] == "lesson"
+        assert data["course_slug"] == "share_course"
+        assert data["lesson"]["title"] == "Lesson 2: Single Share"
+        assert data["lesson"]["initial_code"] == "def solve(): return True"
+
+    def test_import_course_bundle(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        payload = {
+            "version": 1,
+            "kind": "course",
+            "slug": "imported-ml",
+            "title": "Machine Learning from Scratch",
+            "description": "Learn ML basics",
+            "skills": ["ML", "Arrays"],
+            "lessons": [
+                {
+                    "title": "Step 1: Vectors",
+                    "slug": "lesson01",
+                    "chapter": "chapter1",
+                    "exercise_type": "code",
+                    "language": "python",
+                    "description": "# Step 1: Vectors\nWrite a vector.",
+                    "initial_code": "vec = []",
+                    "test_code": "from main import vec\nassert len(vec) == 2",
+                    "solution_code": "vec = [1, 2]",
+                    "skills": ["Vectors"],
+                }
+            ],
+        }
+
+        res = client.post("/file-courses/import", json=payload, headers=auth_headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["kind"] == "course"
+        assert data["course_slug"] == "imported-ml"
+        assert data["lesson_count"] == 1
+
+        # Check files materialized on disk
+        target = courses_dir / "imported-ml"
+        assert target.is_dir()
+        assert (target / "README.md").is_file()
+        assert (target / "metadata.json").is_file()
+        lesson_file = target / "chapter1" / "lesson01" / "main.py"
+        assert lesson_file.is_file()
+        assert lesson_file.read_text() == "vec = []"
+
+        # Re-import collision check (should create -imported suffix)
+        res_dup = client.post("/file-courses/import", json=payload, headers=auth_headers)
+        assert res_dup.status_code == 200
+        assert res_dup.json()["course_slug"] == "imported-ml-imported"
+
+    def test_import_single_lesson_standalone_and_into_course(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        # 1. Standalone single lesson
+        payload_single = {
+            "version": 1,
+            "kind": "lesson",
+            "lesson": {
+                "title": "Solo Challenge",
+                "slug": "solo",
+                "exercise_type": "code",
+                "language": "python",
+                "description": "# Solo Challenge",
+                "initial_code": "ans = 42",
+                "test_code": "assert True",
+                "skills": ["Logic"],
+            },
+        }
+        res1 = client.post("/file-courses/import", json=payload_single, headers=auth_headers)
+        assert res1.status_code == 200
+        data1 = res1.json()
+        assert data1["kind"] == "lesson"
+        assert "shared-" in data1["course_slug"]
+        assert (courses_dir / data1["course_slug"] / "chapter1" / "solo" / "main.py").is_file()
+
+        # 2. Import into existing target course
+        target_course = courses_dir / "existing_host"
+        target_course.mkdir()
+        (target_course / "README.md").write_text("# Existing")
+        (target_course / "metadata.json").write_text(json.dumps({"title": "Existing"}))
+
+        payload_into_existing = {
+            "version": 1,
+            "kind": "lesson",
+            "target_course_slug": "existing_host",
+            "lesson": {
+                "title": "Added Challenge",
+                "slug": "extra_lesson",
+                "chapter": "chapter2",
+                "exercise_type": "code",
+                "description": "# Extra",
+                "initial_code": "extra = True",
+                "test_code": "assert True",
+            },
+        }
+        res2 = client.post("/file-courses/import", json=payload_into_existing, headers=auth_headers)
+        assert res2.status_code == 200
+        data2 = res2.json()
+        assert data2["course_slug"] == "existing_host"
+        assert (target_course / "chapter2" / "extra_lesson" / "main.py").is_file()
+
+        # Bad target course 404
+        payload_into_existing["target_course_slug"] = "ghost_host"
+        res_bad_host = client.post(
+            "/file-courses/import", json=payload_into_existing, headers=auth_headers
+        )
+        assert res_bad_host.status_code == 404
+
+    def test_import_validation_and_drawing_images(
+        self, client: TestClient, auth_headers, tmp_path: Path, monkeypatch
+    ):
+        courses_dir = tmp_path / "courses"
+        courses_dir.mkdir()
+        monkeypatch.setattr("routers.file_courses.COURSES_DIR", courses_dir)
+
+        # Empty lessons in course bundle fails
+        res_empty = client.post(
+            "/file-courses/import",
+            json={"kind": "course", "title": "Empty", "lessons": []},
+            headers=auth_headers,
+        )
+        assert res_empty.status_code == 400
+
+        # Empty lesson in lesson bundle fails
+        res_empty_les = client.post(
+            "/file-courses/import",
+            json={"kind": "lesson", "lesson": None, "lessons": []},
+            headers=auth_headers,
+        )
+        assert res_empty_les.status_code == 400
+
+        # Drawing lesson with base64 images
+        import base64
+
+        sample_b64 = base64.b64encode(b"sample-png-content").decode("ascii")
+        drawing_payload = {
+            "kind": "course",
+            "slug": "drawing-course",
+            "title": "Drawing Course",
+            "lessons": [
+                {
+                    "title": "Diagram Task",
+                    "slug": "diagram01",
+                    "exercise_type": "drawing",
+                    "question_image_base64": f"data:image/png;base64,{sample_b64}",
+                    "solution_image_base64": sample_b64,
+                }
+            ],
+        }
+        res_draw = client.post("/file-courses/import", json=drawing_payload, headers=auth_headers)
+        assert res_draw.status_code == 200
+        l_dir = courses_dir / "drawing-course" / "chapter1" / "diagram01"
+        assert (l_dir / "question.png").is_file()
+        assert (l_dir / "question.png").read_bytes() == b"sample-png-content"
+        assert (l_dir / "solution.png").is_file()
+
+    def test_helper_unit_functions(self, tmp_path: Path):
+        from routers.file_courses import (
+            _decode_image_base64_safely,
+            _encode_image_file_base64,
+            _sanitize_slug,
+        )
+
+        assert _sanitize_slug("  Hello World / 123! ") == "hello-world-123"
+        assert _sanitize_slug("") == "imported"
+        assert _decode_image_base64_safely(None) is None
+        assert _decode_image_base64_safely("invalid-b64-%%") is None
+        assert _decode_image_base64_safely("aGVsbG8=") == b"hello"
+
+        f = tmp_path / "test.png"
+        assert _encode_image_file_base64(f) is None
+        f.write_bytes(b"hello")
+        assert _encode_image_file_base64(f) == "aGVsbG8="

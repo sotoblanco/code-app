@@ -8,9 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agentic_workflow import CourseGenerationError
 from ai_service import ai_service
-from auth import User, get_current_admin, get_current_user
+from auth import User, get_current_user
 from course_import import CourseImportError, build_import_instructions, import_course
-from learning_paths import LearningResource
 from llm import providers_public
 from routers.file_courses import COURSES_DIR
 from run_limits import (

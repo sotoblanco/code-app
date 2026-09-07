@@ -1,25 +1,19 @@
-FROM node:20-slim
-
-# Create a non-root user for security
-RUN groupadd --gid 1000 appuser 2>/dev/null || true \
-    && useradd --uid 1001 --gid 1000 --shell /bin/bash --create-home appuser 2>/dev/null || true
+FROM node:20-alpine
 
 WORKDIR /app
+RUN chown node:node /app
 
 # Copy dependency files first (better layer caching)
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies and purge npm cache to keep layer small
+RUN npm ci --prefer-offline --no-audit --no-fund && npm cache clean --force
 
-# Copy application code
-COPY . .
-
-# Own the app directory
-RUN chown -R 1001:1000 /app
+# Copy application code directly with non-root node user (avoids duplicate layer)
+COPY --chown=node:node . .
 
 # Switch to non-root user
-USER 1001
+USER node
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

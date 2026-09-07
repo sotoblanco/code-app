@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 import requests
@@ -29,9 +30,7 @@ def test_remote_fix():
 
     # 2. Login
     print("2. Logging in...")
-    res = session.post(
-        f"{BASE_URL}/auth/login", data={"username": username, "password": password}
-    )
+    res = session.post(f"{BASE_URL}/auth/login", data={"username": username, "password": password})
 
     if res.status_code != 200:
         print(f"Login failed: {res.text}")
@@ -95,12 +94,10 @@ def test_remote_fix():
 if __name__ == "__main__":
     try:
         if test_remote_fix():
-            print(
-                "\n✅ VERIFICATION PASSED: Database is fixed and Rust support is active."
-            )
+            print("\n✅ VERIFICATION PASSED: Database is fixed and Rust support is active.")
         else:
             print("\n❌ VERIFICATION FAILED.")
-            exit(1)
+            sys.exit(1)
     except Exception as e:
         print(f"Error: {e}")
-        exit(1)
+        sys.exit(1)

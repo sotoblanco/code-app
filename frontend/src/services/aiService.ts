@@ -149,6 +149,20 @@ export interface BuildCourseResult {
     solveit_compliance?: Record<string, boolean>;
 }
 
+export interface LessonVerificationStatus {
+    order: number;
+    title: string;
+    status: string;
+    solution_passes: boolean;
+    starter_fails: boolean;
+    detail?: string;
+}
+
+export interface ImportCourseResult extends BuildCourseResult {
+    verified?: boolean;
+    lesson_verifications?: LessonVerificationStatus[];
+}
+
 export const buildLearningCourse = async (
     topic: string,
     referenceText?: string,
@@ -173,6 +187,71 @@ export const buildLearningCourse = async (
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || 'Could not build the learning course');
+    }
+    return response.json();
+};
+
+/**
+ * Dead-simple, no-LLM path: generate the copy-paste instruction prompt for a
+ * topic. The learner pastes this into any free chat and pastes the reply back
+ * into {@link importLearningCourse}.
+ */
+export const getCourseBuildInstructions = async (
+    topic: string,
+    referenceText?: string,
+): Promise<string> => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw new Error('Please start a learner session before building a course.');
+    }
+
+    const resources = referenceText?.trim()
+        ? [{ kind: 'pasted-notes', name: 'Learner-provided notes', text: referenceText.trim() }]
+        : [];
+    const response = await fetch(`${API_BASE_URL}/ai/learning-path/instructions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ topic: topic.trim(), resources }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Could not generate the build instructions');
+    }
+    const data = await response.json();
+    return data.instructions as string;
+};
+
+/** Import a chat model's pasted reply as a verified course. No AI key needed. */
+export const importLearningCourse = async (
+    topic: string,
+    responseText: string,
+    verify: boolean = true,
+): Promise<ImportCourseResult> => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        throw new Error('Please start a learner session before building a course.');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/ai/learning-path/import`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            topic: topic.trim(),
+            response_markdown: responseText,
+            verify,
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Could not import the course');
     }
     return response.json();
 };

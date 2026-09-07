@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.35](https://github.com/sotoblanco/BaseLayer/compare/v0.1.34...v0.1.35) (2026-09-07)
+
+
+### Features
+
+* **courses:** deep-link lessons and persist per-user resume/progress ([#70](https://github.com/sotoblanco/BaseLayer/issues/70), [#2](https://github.com/sotoblanco/BaseLayer/issues/2)) ([#92](https://github.com/sotoblanco/BaseLayer/issues/92)) ([df56eb7](https://github.com/sotoblanco/BaseLayer/commit/df56eb76b0a9b25759aa937f9e685449fe051577))
+
 ### [0.1.34](https://github.com/sotoblanco/BaseLayer/compare/v0.1.33...v0.1.34) (2026-09-06)
 
 

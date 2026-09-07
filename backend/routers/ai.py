@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ai_service import ai_service
 from auth import User, get_current_admin, get_current_user
+from course_import import CourseImportError, build_import_instructions, import_course
 from learning_paths import LearningResource
 from llm import providers_public
 from routers.file_courses import COURSES_DIR
@@ -17,6 +18,7 @@ from run_limits import (
     MAX_AI_MESSAGE_CHARS,
     enforce_ai_chat_limits,
 )
+from sandbox_exec import SandboxUnavailableError
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -138,6 +140,45 @@ class BuildCourseResponse(BaseModel):
     grounded_in: list[str] = Field(default_factory=list)
     tool_traces: list[ToolTraceRead] = Field(default_factory=list)
     solveit_compliance: dict[str, bool] = Field(default_factory=dict)
+
+
+class CourseInstructionsRequest(BaseModel):
+    topic: str = Field(default="", max_length=500)
+    resources: list[LearningResource] = Field(default_factory=list, max_length=5)
+
+
+class CourseInstructionsResponse(BaseModel):
+    instructions: str
+
+
+class LessonVerifyRead(BaseModel):
+    order: int
+    title: str
+    status: str
+    solution_passes: bool = False
+    starter_fails: bool = False
+    detail: str = ""
+
+
+class ImportCourseResponse(BaseModel):
+    slug: str
+    title: str
+    description: str = ""
+    narrative_arc: str = ""
+    lesson_count: int
+    grounded_in: list[str] = Field(default_factory=list)
+    solveit_compliance: dict[str, bool] = Field(default_factory=dict)
+    verified: bool = False
+    lesson_verifications: list[LessonVerifyRead] = Field(default_factory=list)
+
+
+class ImportCourseRequest(BaseModel):
+    # ``response_markdown`` and ``raw_text`` are aliases: the UI sends
+    # ``response_markdown``; API clients may send either. At least one is needed.
+    topic: str = Field(default="", max_length=500)
+    response_markdown: str | None = None
+    raw_text: str | None = None
+    verify: bool = True
 
 
 @router.get("/status", response_model=AIStatusResponse)
@@ -269,6 +310,94 @@ def build_learning_path(request: BuildCourseRequest, user: User = Depends(get_cu
             for t in result.tool_traces
         ],
         solveit_compliance=result.solveit_compliance,
+    )
+
+
+@router.post("/learning-path/instructions", response_model=CourseInstructionsResponse)
+def get_course_build_instructions(
+    request: CourseInstructionsRequest, user: User = Depends(get_current_user)
+):
+    """Produce a dead-simple, self-contained copy-paste prompt for a topic.
+
+    Never calls an LLM: the prompt is deterministic and embeds the topic, any
+    reference text, the sandbox reality, the Solveit micro-lesson contract, one
+    worked example lesson and a strict JSON output format. A learner pastes it
+    into any free chat (Gemini/ChatGPT/Claude), then imports the reply.
+    """
+    topic = request.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=422, detail="A learning topic is required")
+
+    materials = "\n\n".join(r.text for r in request.resources if r.text.strip())
+    return CourseInstructionsResponse(instructions=build_import_instructions(topic, materials))
+
+
+@router.post("/learning-path/import", response_model=ImportCourseResponse)
+def import_learning_path(request: ImportCourseRequest, user: User = Depends(get_current_user)):
+    """Import a chat model's pasted reply as a real, verified BaseLayer course.
+
+    No LLM is configured or consulted: the learner produced the reply in their
+    own chat. The reply is parsed leniently, validated against the lesson schema,
+    every code lesson is verified to actually run (solution+tests pass, starter+
+    tests fail), and only then the course is written via the shared writer.
+    Nothing is written when the reply cannot produce a runnable course.
+    """
+    reply = (request.response_markdown or request.raw_text or "").strip()
+    if not reply:
+        raise HTTPException(
+            status_code=422,
+            detail="Paste the model's reply (or upload its .md/.json file) to import the course.",
+        )
+
+    try:
+        result = import_course(
+            reply,
+            topic=request.topic,
+            courses_dir=COURSES_DIR,
+            verify=request.verify,
+        )
+    except CourseImportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SandboxUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not verify the course because the code sandbox is unavailable "
+                f"({exc}). Lessons are only published after they run, so nothing was written. "
+                "Start the app with the Docker sandbox (`./dev.sh`) or Modal credentials, "
+                "or pass verify=false to skip the run check."
+            ),
+        ) from exc
+
+    # Record course authorship into LEARNING.md
+    try:
+        from learner_profile import record_learner_event
+
+        record_learner_event(
+            username=user.username,
+            event_type="course_authored",
+            payload={
+                "course_slug": result.slug,
+                "title": result.title,
+                "lesson_count": result.lesson_count,
+                "source": "chat_import",
+            },
+        )
+    except Exception:
+        pass
+
+    return ImportCourseResponse(
+        slug=result.slug,
+        title=result.title,
+        description=result.description,
+        narrative_arc=result.narrative_arc,
+        lesson_count=result.lesson_count,
+        grounded_in=result.grounded_in,
+        solveit_compliance=result.solveit_compliance,
+        verified=result.verified,
+        lesson_verifications=[
+            LessonVerifyRead(**record.to_dict()) for record in result.lesson_verifications
+        ],
     )
 
 

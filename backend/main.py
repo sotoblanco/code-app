@@ -1,7 +1,4 @@
 import os
-import subprocess
-import tempfile
-import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -26,8 +23,8 @@ from models import (
 from routers.ai import router as ai_router
 from routers.file_courses import router as file_courses_router
 from routers.me import router as me_router
-from run_exec import write_submission
 from run_limits import enforce_run_limits
+from sandbox_exec import SandboxUnavailableError, execute_docker
 
 
 @asynccontextmanager
@@ -190,120 +187,42 @@ def run_code(submission: CodeSubmission, user: User = Depends(get_current_user))
             # Lazy import to avoid circular dependency
             from modal_app import run_in_sandbox
 
-            result = run_in_sandbox.remote(
+            return run_in_sandbox.remote(
                 submission.code, submission.language, submission.test_code or ""
             )
-            return result
         except ImportError:
             raise HTTPException(status_code=500, detail="Modal backend not found") from None
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
-    # Default: Use local Docker
+    # Default: Use local Docker (shared executor, identical resource caps/cleanup).
     try:
-        # Create a temp directory for the execution context
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Determine file extension and run command based on language
-            cmd = write_submission(
-                temp_dir, submission.code, submission.language, submission.test_code
-            )
+        result = execute_docker(submission.code, submission.language, submission.test_code or "")
+    except SandboxUnavailableError as exc:
+        # Docker (or another required executable) not found on the host. Return a
+        # structured response instead of raising so the frontend can display a
+        # helpful message instead of 'undefined'.
+        return {"stdout": "", "stderr": str(exc), "exit_code": -1}
 
-            # Ensure temp dir is writable by container processes
-            try:
-                os.chmod(temp_dir, 0o777)
-            except Exception:
-                pass
+    # Record run result into LEARNING.md (only for runs that actually executed).
+    if result.get("exit_code") in (-1, 124):
+        return result
+    try:
+        from learner_profile import record_learner_event
 
-            # Construct docker command with resource caps and isolation
-            container_name = f"baselayer-run-{uuid.uuid4().hex[:12]}"
-            docker_cmd = [
-                "docker",
-                "run",
-                "--rm",
-                "--name",
-                container_name,
-                "--stop-timeout",
-                "1",
-                "--network",
-                "none",
-                "--memory",
-                "512m",
-                "--cpus",
-                "1.0",
-                "--pids-limit",
-                "64",
-                "--security-opt",
-                "no-new-privileges",
-                "-e",
-                "PYTHONDONTWRITEBYTECODE=1",
-                "-v",
-                f"{temp_dir}:/app",
-                "-w",
-                "/app",
-                "sandbox-runner",
-            ] + cmd
+        record_learner_event(
+            username=user.username,
+            event_type="run_result",
+            payload={
+                "success": result.get("exit_code") == 0,
+                "is_submit": bool(submission.test_code and submission.test_code.strip()),
+                "language": submission.language,
+            },
+        )
+    except Exception:
+        pass
 
-            # Run the container
-            try:
-                result = subprocess.run(
-                    docker_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=5,  # 5 second timeout
-                )
-
-                # Record run result into LEARNING.md
-                try:
-                    from learner_profile import record_learner_event
-
-                    record_learner_event(
-                        username=user.username,
-                        event_type="run_result",
-                        payload={
-                            "success": result.returncode == 0,
-                            "is_submit": bool(
-                                submission.test_code and submission.test_code.strip()
-                            ),
-                            "language": submission.language,
-                        },
-                    )
-                except Exception:
-                    pass
-
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "exit_code": result.returncode,
-                }
-            except subprocess.TimeoutExpired:
-                # SIGKILLing the `docker run` client does not stop the container it
-                # started, so stop it explicitly. Fall back to a force-remove so a
-                # timed-out or orphaned container is never left running on the daemon.
-                for cleanup_cmd in (
-                    ["docker", "kill", container_name],
-                    ["docker", "rm", "-f", container_name],
-                ):
-                    try:
-                        cleanup_result = subprocess.run(
-                            cleanup_cmd,
-                            capture_output=True,
-                            timeout=5,
-                        )
-                    except Exception:
-                        continue
-                    if cleanup_result.returncode == 0:
-                        break
-                return {"stdout": "", "stderr": "Execution timed out", "exit_code": 124}
-            except FileNotFoundError as e:
-                # Docker (or another required executable) not found on the host
-                return {"stdout": "", "stderr": f"Executable not found: {e}", "exit_code": -1}
-            except Exception as e:
-                # Return structured JSON instead of raising HTTPException so the frontend
-                # can display a helpful message instead of 'undefined'
-                return {"stdout": "", "stderr": str(e), "exit_code": -1}
-    except Exception as e:
-        # Catch-all for unexpected errors during setup/writing files
-        return {"stdout": "", "stderr": str(e), "exit_code": -1}
+    return result
 
 
 # Serve static assets (JS, CSS, images)

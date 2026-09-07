@@ -8,18 +8,17 @@ RUN groupadd --gid 1000 appuser \
     && useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
 WORKDIR /app
+RUN chown appuser:appuser /app
 
 # Copy dependency files first (better layer caching)
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies (as root, before switching user)
-RUN uv sync --no-install-project --no-dev
+# Install dependencies with no cache bloat
+ENV UV_NO_CACHE=1
+RUN uv sync --no-install-project --no-dev --no-cache
 
-# Copy application code
-COPY . .
-
-# Own the app directory
-RUN chown -R appuser:appuser /app
+# Copy application code directly with correct non-root ownership (avoids duplicate layer)
+COPY --chown=appuser:appuser . .
 
 # Switch to non-root user
 USER appuser

@@ -85,6 +85,7 @@ export interface ConfigureAiRequest {
     api_key?: string;
     model?: string;
     api_base?: string;
+    test_connection?: boolean;
 }
 
 export const getAiStatus = async (): Promise<AIStatus> => {
@@ -114,6 +115,7 @@ export const configureAiKey = async (
                   api_key: body.api_key || '',
                   model: body.model || undefined,
                   api_base: body.api_base || undefined,
+                  test_connection: body.test_connection,
               };
 
     const response = await fetch(`${API_BASE_URL}/ai/configure-key`, {
@@ -125,6 +127,36 @@ export const configureAiKey = async (
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.detail || 'Failed to configure AI key');
+    }
+
+    return response.json();
+};
+
+export const testAiConnection = async (
+    body: ConfigureAiRequest,
+): Promise<{ success: boolean; message: string; provider: string; model: string }> => {
+    const token = localStorage.getItem('token');
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/ai/test-connection`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+            provider: body.provider,
+            api_key: body.api_key || '',
+            model: body.model || undefined,
+            api_base: body.api_base || undefined,
+        }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to connect to AI provider');
     }
 
     return response.json();

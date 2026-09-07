@@ -13,7 +13,7 @@ Gemini is a convenient free cloud option (Google AI Studio). It is not required.
 
 ## 2. AI Setup
 
-Supported providers: **Gemini** (free AI Studio key), **Groq** (free tier), **Ollama** (local, no key), **LM Studio** (local, no key), **OpenAI**, **OpenRouter**, and **custom** OpenAI-compatible endpoints.
+Supported providers: **Ollama** (local, 100% free, no key — see the [Ollama Setup Guide](ollama_setup.md)), **Gemini** (free AI Studio key), **Groq** (free tier), **LM Studio** (local, no key), **OpenAI**, **OpenRouter**, and **custom** OpenAI-compatible endpoints.
 
 ### A. Web Studio (Local Welcome → AI Features)
 - `GET /ai/status` reports the current provider and the full provider list.

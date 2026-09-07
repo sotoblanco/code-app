@@ -5,6 +5,8 @@ from llm import (
     LLMSettings,
     apply_settings_to_env,
     build_client,
+    format_ollama_error,
+    is_connection_error,
     load_settings,
     validate_settings,
 )
@@ -126,6 +128,29 @@ class AIService:
             print(f"Warning: could not create LLM client: {exc}")
             self.client = None
 
+    def check_connection(self, settings: LLMSettings | None = None) -> tuple[bool, str]:
+        target = settings or self.settings
+        if target.provider == "ollama":
+            base = (target.effective_base() or "http://localhost:11434/v1").rstrip("/")
+            if base.endswith("/v1"):
+                base = base[:-3]
+            if not base:
+                base = "http://localhost:11434"
+            try:
+                import requests
+
+                res = requests.get(f"{base}/", timeout=3.0)
+                if res.status_code == 200:
+                    return True, f"Successfully reached Ollama at {base}."
+            except Exception as exc:
+                return False, format_ollama_error(exc, base)
+            return (
+                False,
+                f"Could not reach Ollama at {base}. Make sure Ollama is running (`ollama serve`).",
+            )
+
+        return True, f"Provider {target.provider} is configured."
+
     def configure(
         self,
         provider: str,
@@ -163,11 +188,18 @@ class AIService:
         """Send an OpenAI-compatible ``messages`` payload to the configured model."""
         if not self.is_configured:
             raise RuntimeError("AI service not configured")
-        response = self.client.chat.completions.create(
-            model=self.settings.model,
-            messages=messages,
-        )
-        return (response.choices[0].message.content or "").strip()
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.model,
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            if self.settings.provider == "ollama" and is_connection_error(exc):
+                raise RuntimeError(
+                    format_ollama_error(exc, self.settings.effective_base())
+                ) from exc
+            raise
 
     def _complete_multimodal(self, prompt: str, images: list[tuple[bytes, str]]) -> str:
         import base64 as b64
@@ -185,11 +217,18 @@ class AIService:
                 }
             )
 
-        response = self.client.chat.completions.create(
-            model=self.settings.model,
-            messages=[{"role": "user", "content": content}],
-        )
-        return (response.choices[0].message.content or "").strip()
+        try:
+            response = self.client.chat.completions.create(
+                model=self.settings.model,
+                messages=[{"role": "user", "content": content}],
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            if self.settings.provider == "ollama" and is_connection_error(exc):
+                raise RuntimeError(
+                    format_ollama_error(exc, self.settings.effective_base())
+                ) from exc
+            raise
 
     def run_agentic_course_builder(
         self,
@@ -244,6 +283,8 @@ class AIService:
         try:
             return self._chat_complete(messages)
         except Exception as e:
+            if self.settings.provider == "ollama" and is_connection_error(e):
+                return format_ollama_error(e, self.settings.effective_base())
             return f"Error communicating with AI: {str(e)}"
 
     def evaluate_drawing(
@@ -311,6 +352,8 @@ class AIService:
             return self._parse_drawing_result(text)
         except Exception as e:
             print(f"Error in evaluate_drawing: {e}")
+            if self.settings.provider == "ollama" and is_connection_error(e):
+                return {"error": format_ollama_error(e, self.settings.effective_base())}
             return {"error": f"AI evaluation failed: {str(e)}"}
 
     @staticmethod

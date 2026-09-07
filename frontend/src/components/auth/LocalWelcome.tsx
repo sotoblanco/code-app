@@ -17,6 +17,8 @@ import {
   PenTool,
   Sparkles,
   RefreshCw,
+  Zap,
+  Download,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getAiStatus, configureAiKey, type AIStatus, type AIProviderInfo } from '../../services/aiService';
@@ -143,6 +145,9 @@ export function LocalWelcome({
   } | null>(null);
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [activeOs, setActiveOs] = useState<'macos' | 'linux' | 'windows'>('macos');
 
   useEffect(() => {
     if (isOpen) {
@@ -256,6 +261,39 @@ export function LocalWelcome({
     navigator.clipboard.writeText(envSnippet);
     setCopiedSnippet(true);
     setTimeout(() => setCopiedSnippet(false), 2000);
+  };
+
+  const copyCommand = (cmd: string) => {
+    navigator.clipboard.writeText(cmd);
+    setCopiedCommand(cmd);
+    setTimeout(() => setCopiedCommand(null), 2000);
+  };
+
+  const handleTestAndActivateOllama = async () => {
+    setTestingConnection(true);
+    setKeyFeedback(null);
+    try {
+      const res = await configureAiKey({
+        provider: 'ollama',
+        model: modelInput.trim() || 'llama3.2',
+        api_base: apiBaseInput.trim() || undefined,
+        test_connection: true,
+      });
+      setKeyFeedback({
+        message:
+          res.message ||
+          'Ollama connection verified! Activated and saved to .env.',
+        isError: false,
+      });
+      setShowKeyInput(false);
+      await loadAiStatus();
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Could not reach Ollama';
+      setKeyFeedback({ message, isError: true });
+    } finally {
+      setTestingConnection(false);
+    }
   };
 
   const handleProviderChange = (providerId: string) => {
@@ -529,135 +567,469 @@ export function LocalWelcome({
               )}
 
               {(showKeyInput || !aiStatus?.configured) && (
-                <div className="border border-slate-800 bg-slate-950/60 rounded-xl p-5 space-y-4">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-                    Connect {currentProvider?.name || 'provider'}
-                  </h4>
-
-                  <form onSubmit={handleSaveKey} className="space-y-3">
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-medium text-slate-300">
-                          Model
-                        </label>
-                        {currentProvider?.default_model && (
-                          <span className="text-[11px] text-slate-400">
-                            Default: <span className="font-mono text-emerald-400">{currentProvider.default_model}</span> (recommended best value)
-                          </span>
-                        )}
+                selectedProvider === 'ollama' ? (
+                  <div className="border border-slate-800 bg-slate-950/70 rounded-xl p-5 space-y-5">
+                    {/* Header & Quick Intro */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                          <Zap size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">
+                            Ollama Setup: 100% Free &amp; Local AI
+                          </h4>
+                          <p className="text-xs text-slate-400">
+                            Zero API keys, completely private, runs entirely on your machine.
+                          </p>
+                        </div>
                       </div>
-                      <input
-                        type="text"
-                        value={modelInput}
-                        onChange={(e) => setModelInput(e.target.value)}
-                        placeholder={currentProvider?.default_model || 'model name'}
-                        className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                      />
-                      {currentProvider?.suggested_models && currentProvider.suggested_models.length > 0 && (
-                        <div className="mt-2 space-y-1.5">
-                          <span className="text-[11px] text-slate-400 block">
-                            Suggested models:
+                      <a
+                        href="https://github.com/sotoblanco/BaseLayer/blob/main/docs/ollama_setup.md"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 shrink-0 font-medium transition-colors"
+                      >
+                        <span>Full Setup Guide (docs/ollama_setup.md)</span>
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+
+                    {/* Step 1: Install Ollama */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold">
+                            1
                           </span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {currentProvider.suggested_models.map((m) => {
-                              const isSelected = modelInput === m;
-                              const isDefault = m === currentProvider.default_model;
-                              return (
-                                <button
-                                  key={m}
-                                  type="button"
-                                  onClick={() => setModelInput(m)}
-                                  className={`px-2.5 py-1 rounded text-xs font-mono transition-colors flex items-center gap-1.5 ${
-                                    isSelected
-                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                      : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800'
-                                  }`}
-                                >
-                                  <span>{m}</span>
-                                  {isDefault && (
-                                    <span className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-sans font-medium">
-                                      Best Value
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })}
+                          <span className="text-xs font-semibold text-slate-200">
+                            Install Ollama
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+                          {(['macos', 'linux', 'windows'] as const).map((os) => (
+                            <button
+                              key={os}
+                              type="button"
+                              onClick={() => setActiveOs(os)}
+                              className={`px-2 py-0.5 rounded capitalize font-medium transition-colors ${
+                                activeOs === os
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {os === 'macos' ? 'macOS' : os === 'linux' ? 'Linux' : 'Windows'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {activeOs === 'macos' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 font-mono text-xs text-emerald-400">
+                            <span>brew install ollama</span>
+                            <button
+                              type="button"
+                              onClick={() => copyCommand('brew install ollama')}
+                              className="text-slate-400 hover:text-white flex items-center gap-1 text-[11px] transition-colors ml-2"
+                            >
+                              {copiedCommand === 'brew install ollama' ? (
+                                <Check size={12} className="text-emerald-400" />
+                              ) : (
+                                <Copy size={12} />
+                              )}
+                              <span>{copiedCommand === 'brew install ollama' ? 'Copied' : 'Copy'}</span>
+                            </button>
                           </div>
+                          <p className="text-[11px] text-slate-400">
+                            Or download the macOS desktop app from{' '}
+                            <a
+                              href="https://ollama.com/download"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-400 hover:underline inline-flex items-center gap-0.5"
+                            >
+                              ollama.com/download <ExternalLink size={10} />
+                            </a>
+                          </p>
+                        </div>
+                      )}
+
+                      {activeOs === 'linux' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 font-mono text-xs text-emerald-400">
+                            <span className="truncate">curl -fsSL https://ollama.com/install.sh | sh</span>
+                            <button
+                              type="button"
+                              onClick={() => copyCommand('curl -fsSL https://ollama.com/install.sh | sh')}
+                              className="text-slate-400 hover:text-white flex items-center gap-1 text-[11px] transition-colors ml-2 shrink-0"
+                            >
+                              {copiedCommand === 'curl -fsSL https://ollama.com/install.sh | sh' ? (
+                                <Check size={12} className="text-emerald-400" />
+                              ) : (
+                                <Copy size={12} />
+                              )}
+                              <span>{copiedCommand === 'curl -fsSL https://ollama.com/install.sh | sh' ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-400">
+                            Auto-detects NVIDIA CUDA and AMD ROCm GPUs for hardware acceleration.
+                          </p>
+                        </div>
+                      )}
+
+                      {activeOs === 'windows' && (
+                        <div className="space-y-1.5">
+                          <div className="bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 flex items-center justify-between">
+                            <span className="text-xs text-slate-300">Download Windows installer from ollama.com</span>
+                            <a
+                              href="https://ollama.com/download"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-emerald-400 hover:text-emerald-300 text-xs font-semibold flex items-center gap-1 transition-colors"
+                            >
+                              <Download size={13} />
+                              <span>Download (.exe)</span>
+                            </a>
+                          </div>
+                          <p className="text-[11px] text-slate-400">
+                            Also works inside WSL2 with GPU passthrough.
+                          </p>
                         </div>
                       )}
                     </div>
 
-                    {showBaseField && (
+                    {/* Step 2: Pull a recommended model */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold">
+                          2
+                        </span>
+                        <span className="text-xs font-semibold text-slate-200">
+                          Pull a recommended model
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Run one of these commands in your terminal:
+                      </p>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        {/* Model 1: Llama 3.2 */}
+                        <div
+                          className={`p-2.5 rounded-lg border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                            modelInput === 'llama3.2'
+                              ? 'border-emerald-500/50 bg-emerald-500/10'
+                              : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-white">llama3.2</span>
+                              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-medium">
+                                Default · 3B (~4GB RAM)
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              Fast, lightweight, ideal for laptops and SocratiQ tutoring hints.
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                            <button
+                              type="button"
+                              onClick={() => copyCommand('ollama pull llama3.2')}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                              title="Copy command"
+                            >
+                              {copiedCommand === 'ollama pull llama3.2' ? (
+                                <Check size={11} className="text-emerald-400" />
+                              ) : (
+                                <Copy size={11} />
+                              )}
+                              <span>ollama pull llama3.2</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setModelInput('llama3.2')}
+                              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                                modelInput === 'llama3.2'
+                                  ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/40'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {modelInput === 'llama3.2' ? 'Selected' : 'Use'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Model 2: Qwen 2.5 Coder 7B */}
+                        <div
+                          className={`p-2.5 rounded-lg border transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                            modelInput === 'qwen2.5-coder:7b'
+                              ? 'border-emerald-500/50 bg-emerald-500/10'
+                              : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-white">qwen2.5-coder:7b</span>
+                              <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">
+                                Best for Coding · 7B (~8GB RAM)
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              Tailored for programming intuition, unit tests, and course creation.
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                            <button
+                              type="button"
+                              onClick={() => copyCommand('ollama pull qwen2.5-coder:7b')}
+                              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-mono flex items-center gap-1 transition-colors"
+                              title="Copy command"
+                            >
+                              {copiedCommand === 'ollama pull qwen2.5-coder:7b' ? (
+                                <Check size={11} className="text-emerald-400" />
+                              ) : (
+                                <Copy size={11} />
+                              )}
+                              <span>ollama pull qwen2.5-coder:7b</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setModelInput('qwen2.5-coder:7b')}
+                              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                                modelInput === 'qwen2.5-coder:7b'
+                                  ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/40'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {modelInput === 'qwen2.5-coder:7b' ? 'Selected' : 'Use'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Step 3: Run Ollama */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 text-[11px] font-bold">
+                          3
+                        </span>
+                        <span className="text-xs font-semibold text-slate-200">
+                          Run Ollama &amp; Connect
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 rounded-lg px-3 py-2 font-mono text-xs text-emerald-400">
+                        <span>ollama serve</span>
+                        <button
+                          type="button"
+                          onClick={() => copyCommand('ollama serve')}
+                          className="text-slate-400 hover:text-white flex items-center gap-1 text-[11px] transition-colors ml-2"
+                        >
+                          {copiedCommand === 'ollama serve' ? (
+                            <Check size={12} className="text-emerald-400" />
+                          ) : (
+                            <Copy size={12} />
+                          )}
+                          <span>{copiedCommand === 'ollama serve' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Starts the server on <code className="font-mono text-slate-300">http://localhost:11434/v1</code>. (The desktop app runs automatically in the background).
+                      </p>
+                    </div>
+
+                    {/* Endpoint & Model Details (Editable) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/80">
                       <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                          API base URL
+                        <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                          Active Model
+                        </label>
+                        <input
+                          type="text"
+                          value={modelInput}
+                          onChange={(e) => setModelInput(e.target.value)}
+                          placeholder="llama3.2"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                          API Base URL
                         </label>
                         <input
                           type="text"
                           value={apiBaseInput}
                           onChange={(e) => setApiBaseInput(e.target.value)}
-                          placeholder={currentProvider?.default_base || 'https://.../v1'}
-                          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                          placeholder="http://localhost:11434/v1"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
                         />
                       </div>
-                    )}
+                    </div>
 
-                    {needsKey && (
-                      <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                          API key
-                        </label>
-                        <input
-                          type="password"
-                          autoComplete="off"
-                          value={apiKeyInput}
-                          onChange={(e) => setApiKeyInput(e.target.value)}
-                          placeholder={
-                            selectedProvider === 'gemini'
-                              ? 'Paste your Gemini API key'
-                              : 'Paste your API key'
-                          }
-                          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between pt-1 gap-3">
-                      {currentProvider?.docs_url ? (
-                        <a
-                          href={currentProvider.docs_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                    {/* Action Buttons */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pt-2 gap-2.5">
+                      <span className="text-[11px] text-slate-400">
+                        Docker / remote? Set <code className="font-mono text-slate-300">OLLAMA_ORIGINS=&quot;*&quot;</code>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSaveKey}
+                          disabled={savingKey || testingConnection}
+                          className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors disabled:opacity-50"
                         >
-                          <span>
-                            {selectedProvider === 'gemini'
-                              ? 'Get a free key from Google AI Studio'
-                              : needsKey
-                                ? `Get a ${currentProvider.name} key`
-                                : `Install ${currentProvider.name}`}
-                          </span>
-                          <ExternalLink size={12} />
-                        </a>
-                      ) : (
-                        <span className="text-xs text-slate-500">Any OpenAI-compatible server</span>
+                          {savingKey ? 'Saving...' : 'Save without testing'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleTestAndActivateOllama}
+                          disabled={testingConnection || savingKey}
+                          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40"
+                        >
+                          {testingConnection ? (
+                            <RefreshCw size={13} className="animate-spin" />
+                          ) : (
+                            <Zap size={13} />
+                          )}
+                          <span>{testingConnection ? 'Testing...' : 'Test connection & Activate Ollama'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border border-slate-800 bg-slate-950/60 rounded-xl p-5 space-y-4">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      Connect {currentProvider?.name || 'provider'}
+                    </h4>
+
+                    <form onSubmit={handleSaveKey} className="space-y-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-xs font-medium text-slate-300">
+                            Model
+                          </label>
+                          {currentProvider?.default_model && (
+                            <span className="text-[11px] text-slate-400">
+                              Default: <span className="font-mono text-emerald-400">{currentProvider.default_model}</span> (recommended best value)
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={modelInput}
+                          onChange={(e) => setModelInput(e.target.value)}
+                          placeholder={currentProvider?.default_model || 'model name'}
+                          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        />
+                        {currentProvider?.suggested_models && currentProvider.suggested_models.length > 0 && (
+                          <div className="mt-2 space-y-1.5">
+                            <span className="text-[11px] text-slate-400 block">
+                              Suggested models:
+                            </span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {currentProvider.suggested_models.map((m) => {
+                                const isSelected = modelInput === m;
+                                const isDefault = m === currentProvider.default_model;
+                                return (
+                                  <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => setModelInput(m)}
+                                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors flex items-center gap-1.5 ${
+                                      isSelected
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800'
+                                    }`}
+                                  >
+                                    <span>{m}</span>
+                                    {isDefault && (
+                                      <span className="text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-sans font-medium">
+                                        Best Value
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {showBaseField && (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                            API base URL
+                          </label>
+                          <input
+                            type="text"
+                            value={apiBaseInput}
+                            onChange={(e) => setApiBaseInput(e.target.value)}
+                            placeholder={currentProvider?.default_base || 'https://.../v1'}
+                            className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                          />
+                        </div>
                       )}
 
-                      <button
-                        type="submit"
-                        disabled={
-                          savingKey ||
-                          (needsKey && !apiKeyInput.trim()) ||
-                          (selectedProvider === 'custom' && !apiBaseInput.trim())
-                        }
-                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center gap-1.5 shrink-0"
-                      >
-                        <Key size={13} />
-                        <span>{savingKey ? 'Saving...' : 'Save to .env'}</span>
-                      </button>
-                    </div>
-                  </form>
-                </div>
+                      {needsKey && (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                            API key
+                          </label>
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            value={apiKeyInput}
+                            onChange={(e) => setApiKeyInput(e.target.value)}
+                            placeholder={
+                              selectedProvider === 'gemini'
+                                ? 'Paste your Gemini API key'
+                                : 'Paste your API key'
+                            }
+                            className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-white font-mono text-xs placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                          />
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1 gap-3">
+                        {currentProvider?.docs_url ? (
+                          <a
+                            href={currentProvider.docs_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                          >
+                            <span>
+                              {selectedProvider === 'gemini'
+                                ? 'Get a free key from Google AI Studio'
+                                : needsKey
+                                  ? `Get a ${currentProvider.name} key`
+                                  : `Install ${currentProvider.name}`}
+                            </span>
+                            <ExternalLink size={12} />
+                          </a>
+                        ) : (
+                          <span className="text-xs text-slate-500">Any OpenAI-compatible server</span>
+                        )}
+
+                        <button
+                          type="submit"
+                          disabled={
+                            savingKey ||
+                            (needsKey && !apiKeyInput.trim()) ||
+                            (selectedProvider === 'custom' && !apiBaseInput.trim())
+                          }
+                          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors disabled:opacity-50 flex items-center gap-1.5 shrink-0"
+                        >
+                          <Key size={13} />
+                          <span>{savingKey ? 'Saving...' : 'Save to .env'}</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )
               )}
 
               <div className="border border-slate-800 bg-slate-950/40 rounded-xl p-5 space-y-3">

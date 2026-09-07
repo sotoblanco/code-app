@@ -52,7 +52,10 @@ The runner already has **NumPy**, **PyTorch**, and **Matplotlib** (see `research
 
 ### AI & SocratiQ Tutoring (optional)
 
-Pick a provider. Gemini is the fastest free cloud path (AI Studio key). Ollama and LM Studio run locally with no key. Groq, OpenAI, OpenRouter, and any OpenAI-compatible endpoint also work.
+Pick a provider:
+- **Ollama** — 100% free, private, local AI with zero API keys. See the step-by-step [Ollama Setup Guide](docs/ollama_setup.md).
+- **Google Gemini** — fastest free cloud path with an AI Studio key.
+- **Groq**, **LM Studio**, **OpenAI**, **OpenRouter**, or any OpenAI-compatible custom endpoint.
 
 With a provider configured:
 

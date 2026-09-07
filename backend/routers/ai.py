@@ -154,6 +154,7 @@ class CourseInstructionsRequest(BaseModel):
 
 class CourseInstructionsResponse(BaseModel):
     instructions: str
+    personalization: dict[str, str] | None = None
 
 
 class LessonVerifyRead(BaseModel):
@@ -322,16 +323,44 @@ def get_course_build_instructions(
     """Produce a dead-simple, self-contained copy-paste prompt for a topic.
 
     Never calls an LLM: the prompt is deterministic and embeds the topic, any
-    reference text, the sandbox reality, the Solveit micro-lesson contract, one
-    worked example lesson and a strict JSON output format. A learner pastes it
-    into any free chat (Gemini/ChatGPT/Claude), then imports the reply.
+    reference text, the learner's personalized profile, the sandbox reality,
+    the Solveit micro-lesson contract, one worked example lesson and a strict
+    JSON output format. A learner pastes it into any free chat (Gemini/ChatGPT/Claude),
+    then imports the reply.
     """
     topic = request.topic.strip()
     if not topic:
         raise HTTPException(status_code=422, detail="A learning topic is required")
 
     materials = "\n\n".join(r.text for r in request.resources if r.text.strip())
-    return CourseInstructionsResponse(instructions=build_import_instructions(topic, materials))
+
+    parsed_profile: dict[str, Any] = {}
+    try:
+        from learner_profile import get_or_create_profile
+
+        _, parsed_profile = get_or_create_profile(user.username)
+    except Exception:
+        parsed_profile = {}
+
+    instructions = build_import_instructions(topic, materials, learner_profile=parsed_profile)
+
+    personalization: dict[str, str] | None = None
+    if parsed_profile:
+        fm = parsed_profile.get("frontmatter", {})
+        if fm:
+            personalization = {
+                "understanding_level": str(fm.get("understanding_level", "intermediate")),
+                "tutor_style": str(fm.get("tutor_style", "solveit")),
+                "explanation_length": str(fm.get("explanation_length", "short")),
+            }
+
+    return CourseInstructionsResponse(
+        instructions=instructions,
+        personalization=personalization,
+    )
+
+
+get_learning_path_instructions = get_course_build_instructions
 
 
 @router.post("/learning-path/import", response_model=ImportCourseResponse)

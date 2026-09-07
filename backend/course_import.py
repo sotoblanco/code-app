@@ -74,17 +74,30 @@ def _stdlib_modules() -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 EXAMPLE_LESSON: dict[str, str] = {
-    "title": "Shape: create a 3-element array",
-    "objective": "Create a NumPy array of exactly three elements and confirm its shape.",
-    "toy_data": "values [1, 2, 3] -> shape (3,)",
-    "expected_result": "(3,)",
-    "micro_task": "In make_array(), write one line returning np.array([1, 2, 3]).",
-    "inspect_prompt": "Run the code. What does the printed shape look like?",
-    "starter_code": "import numpy as np\n\ndef make_array():\n    return None\n",
-    "test_code": (
-        "from main import make_array\nimport numpy as np\n\nassert make_array().shape == (3,)\n"
+    "title": "Pixel Luminance: create a normalized RGB array",
+    "objective": "Convert an 8-bit RGB color triple into a normalized float array.",
+    "toy_data": "raw RGB triple [255, 128, 0] -> normalized [1.0, 0.50196, 0.0]",
+    "expected_result": "np.array([1.0, 0.50196, 0.0])",
+    "micro_task": "In make_array(), return the input list converted to a float32 NumPy array divided by 255.0.",
+    "inspect_prompt": "Before running: predict what make_array([255, 0, 0])[0] evaluates to. Run to verify.",
+    "starter_code": (
+        "import numpy as np\n\n"
+        "def make_array(rgb_values=[255, 128, 0]):\n"
+        "    # TODO: convert rgb_values to np.float32 array and normalize by 255.0\n"
+        "    return None\n"
     ),
-    "solution_code": "import numpy as np\n\ndef make_array():\n    return np.array([1, 2, 3])\n",
+    "test_code": (
+        "from main import make_array\n"
+        "import numpy as np\n\n"
+        "arr = make_array([255, 128, 0])\n"
+        "assert isinstance(arr, np.ndarray)\n"
+        "assert np.isclose(arr[0], 1.0) and np.isclose(arr[1], 128 / 255.0)\n"
+    ),
+    "solution_code": (
+        "import numpy as np\n\n"
+        "def make_array(rgb_values=[255, 128, 0]):\n"
+        "    return np.array(rgb_values, dtype=np.float32) / 255.0\n"
+    ),
 }
 
 
@@ -92,10 +105,123 @@ def _example_lesson_block() -> str:
     return json.dumps(EXAMPLE_LESSON, indent=2)
 
 
-def build_import_instructions(topic: str, resources_text: str = "") -> str:
+def _format_learner_profile_section(learner_profile: dict[str, Any] | None) -> str:
+    """Format the LEARNER PROFILE & ADAPTATION section if profile information is present."""
+    if not learner_profile or not isinstance(learner_profile, dict):
+        return ""
+
+    fm = learner_profile.get("frontmatter")
+    if not isinstance(fm, dict):
+        fm = learner_profile
+
+    lines: list[str] = []
+
+    level = str(fm.get("understanding_level") or "").lower().strip()
+    if level == "beginner":
+        lines.append(
+            "- Learner Level: BEGINNER. Provide gentle scaffolding, intuitive explanations, and small step sizes. "
+            "Avoid unexplained jargon or complex idioms. Build conceptual confidence."
+        )
+    elif level == "advanced":
+        lines.append(
+            "- Learner Level: ADVANCED. Skip introductory basics. Jump straight to core mechanics, internal "
+            "representations, edge cases, and performance considerations. Use non-trivial transformations."
+        )
+    elif level == "intermediate":
+        lines.append(
+            "- Learner Level: INTERMEDIATE. Practical, balanced depth. Focus on clear mental models, idiomatic "
+            "patterns, and realistic data transformations without unnecessary boilerplate."
+        )
+    elif level:
+        lines.append(
+            f"- Learner Level: {level.capitalize()}. Calibrate complexity and step size to this level."
+        )
+
+    style = str(fm.get("tutor_style") or "").lower().strip()
+    if style == "solveit":
+        lines.append(
+            "- Tutor Style: SOLVEIT METHODOLOGY. Strictly enforce hands-on micro-steps from first principles: "
+            "concrete toy data inspection before code, 1-3 line tasks, and prediction-driven verification."
+        )
+    elif style == "socratic":
+        lines.append(
+            "- Tutor Style: SOCRATIC. Emphasize guiding questions: frame objectives and inspect prompts to challenge "
+            "the learner to deduce mechanisms and reflect on behavior rather than being spoon-fed answers."
+        )
+    elif style == "direct":
+        lines.append(
+            "- Tutor Style: DIRECT. Straightforward, punchy implementations with minimal conversational overhead. "
+            "Clear cause-and-effect."
+        )
+    elif style == "blooms":
+        lines.append(
+            "- Tutor Style: BLOOM'S TAXONOMY. Scaffold lessons progressively through cognitive levels: start with "
+            "observing and understanding primitives, then advance through applying, analyzing, and synthesizing."
+        )
+    elif style:
+        lines.append(f"- Tutor Style: {style.capitalize()}. Adhere to this instructional style.")
+
+    explanation = str(fm.get("explanation_length") or "").lower().strip()
+    if explanation in ("short", "concise"):
+        lines.append(
+            "- Explanation Style: CONCISE. Keep objectives and prompts short, crisp, and direct. Zero conversational fluff."
+        )
+    elif explanation == "thorough":
+        lines.append(
+            "- Explanation Style: THOROUGH. Provide rich conceptual context, vivid analogies, and clear reasoning for "
+            "why the code behaves the way it does."
+        )
+
+    pace = str(fm.get("pace") or "").lower().strip()
+    if pace == "sprint":
+        lines.append(
+            "- Pace: SPRINT. Fast-paced, high-yield lessons with immediate practical payoff."
+        )
+    elif pace == "unhurried":
+        lines.append(
+            "- Pace: UNHURRIED. Ensure each lesson feels solid, thoroughly scaffolded, and well-grounded."
+        )
+    elif pace == "mixed":
+        lines.append(
+            "- Pace: MIXED. Build foundations steadily, then accelerate into practical compositions."
+        )
+
+    modalities = fm.get("preferred_modalities")
+    if isinstance(modalities, list) and modalities:
+        mod_str = ", ".join(str(m).strip() for m in modalities if str(m).strip())
+        if mod_str:
+            lines.append(
+                f"- Preferred Modalities: {mod_str}. Where helpful, frame transformations in tabular mental models, "
+                "visual coordinate spaces, or concrete array structures."
+            )
+
+    goal = str(fm.get("goal") or "").strip()
+    if goal:
+        lines.append(f"- Learning Goal: {goal}")
+
+    snapshot = str(learner_profile.get("snapshot") or "").strip()
+    if snapshot:
+        lines.append(f"- Learner Snapshot: {snapshot}")
+
+    if not lines:
+        return ""
+
+    bullet_points = "\n".join(lines)
+    return (
+        "\nLEARNER PROFILE & ADAPTATION (tailor this course specifically to this student):\n"
+        f"{bullet_points}\n"
+    )
+
+
+def build_import_instructions(
+    topic: str,
+    resources_text: str = "",
+    learner_profile: dict[str, Any] | None = None,
+) -> str:
     """Build the single self-contained copy-paste prompt for ``topic``.
 
     Self-contained means it embeds the learner's topic, any reference text, the
+    learner's profile (level, tutor style, explanation preferences, goals), the
     sandbox reality (which imports actually work), the Solveit micro-lesson
     contract, one fully worked example lesson, a capped ask (4-6 code-only
     lessons) and a strict output format. It is meant to be usable both as the
@@ -111,18 +237,21 @@ def build_import_instructions(topic: str, resources_text: str = "") -> str:
             f"```text\n{clipped}\n```\n"
         )
 
+    profile_block = _format_learner_profile_section(learner_profile)
+
     return f"""You are writing a course for the BaseLayer learning platform. Build a real, runnable course.
 
 COURSE TO BUILD
 Topic: {clean_topic}
-{reference_block}
+{reference_block}{profile_block}
 RULES (follow every rule)
-1. Write exactly {MIN_IMPORT_LESSONS} to {MAX_IMPORT_LESSONS} Python lessons that teach this topic one tiny step at a time, from simplest to most useful.
-2. Every lesson is a Solveit micro-lesson: a tiny toy example with a predicted result, a 1-3 line task, then an inspection question.
-3. The learner's code lives in a file named main.py, and your test_code runs right next to it. So test_code MUST start by importing what it checks from main, for example: from main import make_array
-4. starter_code must be INCOMPLETE: it must FAIL your tests until the learner finishes the micro_task. solution_code must PASS your tests.
-5. Import ONLY the Python standard library plus: {INSTALLED_SANDBOX_LIBRARY_TEXT}. Never import anything else (pandas, sklearn, requests, ... are NOT installed and break the lesson).
-6. Keep functions small. No file I/O, no network access, no infinite loops, no input().
+1. Narrative Arc & Progressiveness: Write exactly {MIN_IMPORT_LESSONS} to {MAX_IMPORT_LESSONS} Python lessons with a clear progression. Each lesson must directly build on the concept or data transformation from the previous lesson, constructing a cohesive mental model or mini-pipeline rather than disconnected toy fragments.
+2. Concrete Domain Toy Data: NEVER use lazy generic placeholders like foo, bar, or arbitrary [1, 2, 3] unless strictly necessary. Always use realistic, domain-relevant toy data tied to the topic (e.g. RGB pixel triples [255, 128, 0] for vision, token sequences for NLP, timestamped sensor readings for time-series, (x, y) coordinates for geometry, trade prices for finance).
+3. Active Inspection & Prediction: Every lesson is a Solveit micro-lesson. The inspect_prompt MUST ask the learner to predict what a specific variable or expression evaluates to before running the code (e.g. "Before running: predict what make_array([255, 0, 0])[0] evaluates to. Run to verify.").
+4. Scaffolded Starter Code: starter_code must contain a clear comment (e.g. # TODO: ...) guiding where to write code, but MUST be incomplete so that it FAILS test_code out of the box. solution_code must PASS test_code with a clean 1-3 line implementation.
+5. Sandboxed Testing Environment: The learner's code lives in a file named main.py, and your test_code runs right next to it. So test_code MUST start by importing what it checks from main, for example: from main import make_array
+6. Allowed Sandbox Libraries: Import ONLY the Python standard library plus: {INSTALLED_SANDBOX_LIBRARY_TEXT}. Never import anything else (pandas, sklearn, requests, ... are NOT installed and break the lesson).
+7. Pure, Small Functions: Keep functions small, deterministic, and fast (<1 second). No file I/O, no network access, no infinite loops, no input().
 
 OUTPUT FORMAT (strict — do not skip)
 Reply ONLY with one ```json fenced block and NOTHING ELSE. No explanations, no text before or after the fence. The block must look EXACTLY like this:
@@ -130,23 +259,23 @@ Reply ONLY with one ```json fenced block and NOTHING ELSE. No explanations, no t
 {{
   "title": "Short course title",
   "description": "One sentence on what the learner builds.",
-  "narrative_arc": "One sentence on how the lessons build on each other.",
+  "narrative_arc": "One sentence on how the lessons build on each other into a cohesive pipeline.",
   "lessons": [
     {{
       "title": "Name of this lesson",
       "objective": "The single idea this lesson teaches, in one sentence.",
-      "toy_data": "The tiny input to predict on first, e.g. items = [1, 2, 3] -> doubled = [2, 4, 6]",
-      "expected_result": "The exact result the toy example must produce.",
-      "micro_task": "The concrete 1-3 line task the learner must write.",
-      "inspect_prompt": "A question that makes the learner look at their printed output.",
-      "starter_code": "Incomplete Python that fails the tests until the task is done (rule 4).",
+      "toy_data": "Concrete domain-relevant input, e.g. raw RGB triple [255, 128, 0] -> normalized [1.0, 0.50196, 0.0]",
+      "expected_result": "The exact evaluated result the toy example produces.",
+      "micro_task": "The concrete 1-3 line task the learner must write in main.py.",
+      "inspect_prompt": "Active prediction prompt asking what a specific expression evaluates to before running.",
+      "starter_code": "Incomplete Python with a # TODO comment that fails tests until finished.",
       "test_code": "Python asserting the toy behavior; imports the learner's function from main.",
-      "solution_code": "Short, complete Python that passes test_code."
+      "solution_code": "Short, complete Python (1-3 lines) that passes test_code."
     }}
   ]
 }}
 
-FULLY WORKED EXAMPLE LESSON - copy this exact structure (your lessons may use plain Python or the packages from rule 5):
+FULLY WORKED EXAMPLE LESSON - copy this exact structure (your lessons may use plain Python or the packages from rule 6):
 
 ```json
 {_example_lesson_block()}

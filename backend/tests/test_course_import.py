@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from course_import import (
     CourseImportError,
+    build_import_instructions,
     extract_course_payload,
     normalize_course_payload,
 )
@@ -169,6 +170,123 @@ class TestInstructionsEndpoint:
             "/ai/learning-path/instructions", json={"topic": topic}, headers=auth_headers
         )
         assert response.status_code == 422
+
+    def test_instructions_loads_profile_and_includes_traits(self, client: TestClient, auth_headers):
+        mocked_profile = {
+            "frontmatter": {
+                "understanding_level": "advanced",
+                "tutor_style": "socratic",
+                "explanation_length": "thorough",
+                "pace": "sprint",
+                "preferred_modalities": ["code", "drawing"],
+                "goal": "Master deep learning internals from scratch",
+            },
+            "snapshot": "Experienced engineer diving into neural network autograd systems.",
+        }
+        with patch("learner_profile.get_or_create_profile", return_value=("md", mocked_profile)):
+            response = client.post(
+                "/ai/learning-path/instructions",
+                json={"topic": "autograd backward engine"},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            instructions = body["instructions"]
+            assert "LEARNER PROFILE & ADAPTATION" in instructions
+            assert "ADVANCED" in instructions
+            assert "SOCRATIC" in instructions
+            assert "THOROUGH" in instructions
+            assert "SPRINT" in instructions
+            assert "code, drawing" in instructions
+            assert "Master deep learning internals from scratch" in instructions
+            assert (
+                "Experienced engineer diving into neural network autograd systems" in instructions
+            )
+            assert body["personalization"] == {
+                "understanding_level": "advanced",
+                "tutor_style": "socratic",
+                "explanation_length": "thorough",
+            }
+
+    def test_instructions_graceful_when_profile_fails(self, client: TestClient, auth_headers):
+        with patch(
+            "learner_profile.get_or_create_profile",
+            side_effect=RuntimeError("Profile store unavailable"),
+        ):
+            response = client.post(
+                "/ai/learning-path/instructions",
+                json={"topic": "numpy basics"},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert "numpy basics" in body["instructions"]
+            assert body["personalization"] is None
+
+
+class TestBuildImportInstructions:
+    def test_build_instructions_with_beginner_solveit_profile(self):
+        profile = {
+            "frontmatter": {
+                "understanding_level": "beginner",
+                "tutor_style": "solveit",
+                "explanation_length": "short",
+                "pace": "unhurried",
+                "preferred_modalities": ["code", "spreadsheet"],
+            },
+            "snapshot": "New student learning Python data manipulation.",
+        }
+        prompt = build_import_instructions("pandas vectors", learner_profile=profile)
+        assert "LEARNER PROFILE & ADAPTATION" in prompt
+        assert "BEGINNER" in prompt
+        assert "SOLVEIT METHODOLOGY" in prompt
+        assert "CONCISE" in prompt
+        assert "UNHURRIED" in prompt
+        assert "code, spreadsheet" in prompt
+        assert "New student learning Python data manipulation." in prompt
+        # Check enhanced prompt rules for weaker models
+        assert "Narrative Arc & Progressiveness" in prompt
+        assert "Concrete Domain Toy Data" in prompt
+        assert "NEVER use lazy generic placeholders" in prompt
+        assert "Active Inspection & Prediction" in prompt
+        assert "Scaffolded Starter Code" in prompt
+
+    def test_build_instructions_with_advanced_direct_profile(self):
+        prompt_direct = build_import_instructions(
+            "graph algorithms",
+            learner_profile={
+                "understanding_level": "advanced",
+                "tutor_style": "direct",
+                "explanation_length": "short",
+            },
+        )
+        assert "ADVANCED" in prompt_direct
+        assert "DIRECT" in prompt_direct
+        assert "CONCISE" in prompt_direct
+
+    def test_build_instructions_with_blooms_taxonomy_profile(self):
+        prompt_blooms = build_import_instructions(
+            "compiler design",
+            learner_profile={
+                "frontmatter": {
+                    "understanding_level": "intermediate",
+                    "tutor_style": "blooms",
+                    "explanation_length": "thorough",
+                }
+            },
+        )
+        assert "INTERMEDIATE" in prompt_blooms
+        assert "BLOOM'S TAXONOMY" in prompt_blooms
+        assert "THOROUGH" in prompt_blooms
+
+    def test_build_instructions_with_empty_or_none_profile(self):
+        prompt_none = build_import_instructions("matrix math", learner_profile=None)
+        assert "LEARNER PROFILE & ADAPTATION" not in prompt_none
+        assert "Topic: matrix math" in prompt_none
+
+        prompt_empty = build_import_instructions("matrix math", learner_profile={})
+        assert "LEARNER PROFILE & ADAPTATION" not in prompt_empty
+        assert "Topic: matrix math" in prompt_empty
 
 
 # ---------------------------------------------------------------------------

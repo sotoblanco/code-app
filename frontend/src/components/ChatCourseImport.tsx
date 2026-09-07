@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,12 +7,14 @@ import {
   FileText,
   Loader,
   MessageSquareText,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 import {
   getCourseBuildInstructions,
   importLearningCourse,
 } from '../services/aiService';
+import { getLearningProfile, type ProfileFrontMatter } from '../services/profileService';
 
 interface ChatCourseImportProps {
   topic: string;
@@ -59,7 +61,29 @@ export default function ChatCourseImport({
   const [copied, setCopied] = useState(false);
   const [skipVerify, setSkipVerify] = useState(false);
   const [sandboxDown, setSandboxDown] = useState(false);
+  const [learnerProfile, setLearnerProfile] = useState<ProfileFrontMatter | null>(null);
+  const [activePersonalization, setActivePersonalization] = useState<{
+    understanding_level?: string;
+    tutor_style?: string;
+    explanation_length?: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getLearningProfile()
+      .then((res) => {
+        if (mounted && res?.parsed?.frontmatter) {
+          setLearnerProfile(res.parsed.frontmatter);
+        }
+      })
+      .catch(() => {
+        // Graceful fallback when not authenticated or profile fails
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const generatePrompt = async () => {
     if (!topic.trim()) {
@@ -69,8 +93,11 @@ export default function ChatCourseImport({
     setError('');
     setIsGenerating(true);
     try {
-      const prompt = await getCourseBuildInstructions(topic, referenceText);
-      setInstructions(prompt);
+      const result = await getCourseBuildInstructions(topic, referenceText);
+      setInstructions(result.instructions);
+      if (result.personalization) {
+        setActivePersonalization(result.personalization);
+      }
       setStep(2);
     } catch (generateError) {
       setError(
@@ -135,6 +162,42 @@ export default function ChatCourseImport({
 
   const canGoNext = step === 1 && !isGenerating && topic.trim().length > 0;
 
+  const formatLabel = (val?: string) => {
+    if (!val) return '';
+    if (val.toLowerCase() === 'blooms') return "Bloom's";
+    return val.charAt(0).toUpperCase() + val.slice(1);
+  };
+
+  const formatExplanation = (val?: string) => {
+    if (!val) return 'Concise';
+    if (val.toLowerCase() === 'thorough') return 'Thorough';
+    return 'Concise';
+  };
+
+  const currentLevel = formatLabel(
+    activePersonalization?.understanding_level || learnerProfile?.understanding_level || 'intermediate',
+  );
+  const currentStyle = formatLabel(
+    activePersonalization?.tutor_style || learnerProfile?.tutor_style || 'solveit',
+  );
+  const currentExplanation = formatExplanation(
+    activePersonalization?.explanation_length || learnerProfile?.explanation_length || 'short',
+  );
+
+  const personalizationBadge = (
+    <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-slate-300">
+      <Sparkles size={14} className="text-emerald-400 shrink-0" />
+      <span>
+        Personalized for:{' '}
+        <span className="font-semibold text-emerald-300">[{currentLevel}]</span>
+        {' · '}
+        <span className="font-semibold text-emerald-300">[{currentStyle}]</span> style
+        {' · '}
+        <span className="font-semibold text-emerald-300">[{currentExplanation}]</span> explanations
+      </span>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       {/* Stepper */}
@@ -175,6 +238,8 @@ export default function ChatCourseImport({
           }}
           className="space-y-5"
         >
+          {personalizationBadge}
+
           <div>
             <label
               htmlFor="chat-course-topic"
@@ -240,6 +305,8 @@ export default function ChatCourseImport({
 
       {step === 2 && (
         <div className="space-y-4">
+          {personalizationBadge}
+
           <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3">

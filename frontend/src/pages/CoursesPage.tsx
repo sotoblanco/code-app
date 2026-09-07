@@ -1,6 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Terminal, ChevronRight, FolderCode, Database, Compass, Sliders, CheckCircle2, Upload, Share2 } from 'lucide-react';
+import {
+  Terminal,
+  ChevronRight,
+  FolderCode,
+  Database,
+  Compass,
+  Sliders,
+  CheckCircle2,
+  Upload,
+  Share2,
+  Trash2,
+  AlertTriangle,
+  AlertCircle,
+  Loader,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL, APP_VERSION } from '../config';
 import { UserMenu } from '../components/UserMenu';
@@ -38,6 +52,13 @@ interface UnifiedCourse {
   progress?: CourseProgressSummary | null;
 }
 
+const PROTECTED_COURSE_SLUGS = new Set([
+  'tinytorch',
+  'data-modeling',
+  'pytorch',
+  'llms-from-scratch',
+]);
+
 export default function CoursesPage() {
   const [courses, setCourses] = useState<UnifiedCourse[]>([]);
   const [progressBySlug, setProgressBySlug] = useState<Record<string, CourseProgressSummary>>({});
@@ -54,8 +75,39 @@ export default function CoursesPage() {
     lessonSlug?: string | null;
     title: string;
   } | null>(null);
+  const [courseToDelete, setCourseToDelete] = useState<{ slug: string; title: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+
+  const handleDeleteCourse = async () => {
+    if (!courseToDelete) return;
+    setIsDeleting(true);
+    setDeleteError('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE_URL}/file-courses/${courseToDelete.slug}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to remove course');
+      }
+      setCourses((prev) => prev.filter((c) => c.id !== `file-${courseToDelete.slug}`));
+      setProgressBySlug((prev) => {
+        const copy = { ...prev };
+        delete copy[courseToDelete.slug];
+        return copy;
+      });
+      setCourseToDelete(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Deletion failed');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   useEffect(() => {
     const hash = window.location.hash;
@@ -315,21 +367,39 @@ export default function CoursesPage() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         {course.type === 'file' && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const cleanSlug = course.id.replace(/^file-/, '');
-                              setShareModalData({
-                                courseSlug: cleanSlug,
-                                title: course.title,
-                              });
-                            }}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-700"
-                            title="Share or export this course"
-                          >
-                            <Share2 size={14} />
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const cleanSlug = course.id.replace(/^file-/, '');
+                                setShareModalData({
+                                  courseSlug: cleanSlug,
+                                  title: course.title,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors border border-transparent hover:border-slate-700"
+                              title="Share or export this course"
+                            >
+                              <Share2 size={14} />
+                            </button>
+                            {!PROTECTED_COURSE_SLUGS.has(course.id.replace(/^file-/, '').toLowerCase()) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCourseToDelete({
+                                    slug: course.id.replace(/^file-/, ''),
+                                    title: course.title,
+                                  });
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors border border-transparent hover:border-rose-500/20"
+                                title="Remove course from catalog"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </>
                         )}
                         <span
                           className={`text-xs px-2 py-1 rounded-full font-medium border ${
@@ -472,6 +542,55 @@ export default function CoursesPage() {
         }}
         initialData={importInitialData}
       />
+      {courseToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white">Remove Course</h3>
+                <p className="text-xs text-slate-400 truncate">{courseToDelete.title}</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to remove <strong className="text-white">&ldquo;{courseToDelete.title}&rdquo;</strong> from your catalog? This will permanently delete the course files from your disk.
+            </p>
+
+            {deleteError && (
+              <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle size={14} />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCourseToDelete(null);
+                  setDeleteError('');
+                }}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteCourse}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-rose-600/20"
+              >
+                {isDeleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <span>{isDeleting ? 'Removing...' : 'Remove Course'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

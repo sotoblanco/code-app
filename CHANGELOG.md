@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+### [0.1.40](https://github.com/sotoblanco/BaseLayer/compare/v0.1.39...v0.1.40) (2026-09-07)
+
+
+### Features
+
+* **ai:** add clear Ollama setup instructions and connection guidance ([#98](https://github.com/sotoblanco/BaseLayer/issues/98)) ([260a5d8](https://github.com/sotoblanco/BaseLayer/commit/260a5d8f9b76fdb93563215594f9d84ec84287a6))
+
 ### [0.1.39](https://github.com/sotoblanco/BaseLayer/compare/v0.1.38...v0.1.39) (2026-09-07)
 
 

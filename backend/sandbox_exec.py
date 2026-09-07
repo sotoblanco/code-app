@@ -26,6 +26,29 @@ class SandboxUnavailableError(RuntimeError):
     """
 
 
+DAEMON_FAILURE_INDICATORS = (
+    "failed to connect to the docker api",
+    "cannot connect to the docker daemon",
+    "is the docker daemon running",
+    "error during connect",
+    "docker daemon is not running",
+    "docker.sock",
+    "daemon is not running",
+    "unable to find image 'sandbox-runner",
+    "pull access denied for sandbox-runner",
+    "repository sandbox-runner not found",
+    "permission denied while trying to connect to the docker daemon socket",
+)
+
+
+def is_docker_daemon_failure(text: str) -> bool:
+    """Return True if output indicates Docker daemon/service could not be reached or run."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(indicator in lowered for indicator in DAEMON_FAILURE_INDICATORS)
+
+
 def execute_docker(
     code: str,
     language: str = "python",
@@ -86,6 +109,11 @@ def execute_docker(
                     text=True,
                     timeout=timeout,
                 )
+                output_to_check = (result.stderr or "") + "\n" + (result.stdout or "")
+                if result.returncode != 0 and is_docker_daemon_failure(output_to_check):
+                    raise SandboxUnavailableError(
+                        f"Docker sandbox is unavailable: {result.stderr.strip() or result.stdout.strip()}"
+                    )
                 return {
                     "stdout": result.stdout,
                     "stderr": result.stderr,
@@ -112,8 +140,12 @@ def execute_docker(
                 return {"stdout": "", "stderr": "Execution timed out", "exit_code": 124}
             except FileNotFoundError as exc:
                 raise SandboxUnavailableError(f"Executable not found: {exc}") from exc
+            except SandboxUnavailableError:
+                raise
             except Exception as exc:
                 return {"stdout": "", "stderr": str(exc), "exit_code": -1}
+    except SandboxUnavailableError:
+        raise
     except Exception as exc:
         return {"stdout": "", "stderr": str(exc), "exit_code": -1}
 

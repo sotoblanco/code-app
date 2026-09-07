@@ -252,6 +252,7 @@ export const getCourseBuildInstructions = async (
 export const importLearningCourse = async (
     topic: string,
     responseText: string,
+    verify: boolean = true,
 ): Promise<ImportCourseResult> => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -264,7 +265,11 @@ export const importLearningCourse = async (
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ topic: topic.trim(), response_markdown: responseText }),
+        body: JSON.stringify({
+            topic: topic.trim(),
+            response_markdown: responseText,
+            verify,
+        }),
     });
 
     if (!response.ok) {

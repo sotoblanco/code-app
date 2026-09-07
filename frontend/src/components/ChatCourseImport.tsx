@@ -57,6 +57,8 @@ export default function ChatCourseImport({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [skipVerify, setSkipVerify] = useState(false);
+  const [sandboxDown, setSandboxDown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const generatePrompt = async () => {
@@ -102,22 +104,30 @@ export default function ChatCourseImport({
     reader.readAsText(file);
   };
 
-  const doImport = async () => {
+  const doImport = async (overrideVerify?: boolean) => {
     if (!replyText.trim()) {
       setError('Paste the model\u2019s reply (or upload its .md/.json file) first.');
       return;
     }
     setError('');
     setIsImporting(true);
+    const shouldVerify = overrideVerify !== undefined ? overrideVerify : !skipVerify;
     try {
-      const result = await importLearningCourse(topic, replyText);
+      const result = await importLearningCourse(topic, replyText, shouldVerify);
       onImported(result.slug);
     } catch (importError) {
-      setError(
+      const msg =
         importError instanceof Error
           ? importError.message
-          : 'Could not import the course. Is your reply the model\u2019s full course output?',
-      );
+          : 'Could not import the course. Is your reply the model\u2019s full course output?';
+      setError(msg);
+      if (
+        msg.toLowerCase().includes('sandbox is unavailable') ||
+        msg.toLowerCase().includes('docker') ||
+        msg.toLowerCase().includes('verify=false')
+      ) {
+        setSandboxDown(true);
+      }
     } finally {
       setIsImporting(false);
     }
@@ -342,9 +352,46 @@ export default function ChatCourseImport({
             </p>
           )}
 
+          {sandboxDown && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs text-amber-200 space-y-2">
+              <div className="font-semibold text-amber-300">
+                Docker sandbox is not running or unreachable.
+              </div>
+              <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                You can import and browse the course right now without running verification tests.
+                You can execute its code later once Docker Desktop or Modal is active.
+              </p>
+              <button
+                type="button"
+                onClick={() => doImport(false)}
+                disabled={isImporting}
+                className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400 transition-colors disabled:opacity-60"
+              >
+                Import course without verification check
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              id="skip-sandbox-verify"
+              type="checkbox"
+              checked={skipVerify}
+              onChange={(e) => setSkipVerify(e.target.checked)}
+              className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0 cursor-pointer"
+            />
+            <label
+              htmlFor="skip-sandbox-verify"
+              className="text-xs text-slate-400 select-none cursor-pointer"
+            >
+              Skip sandbox test check (import even if Docker is not running)
+            </label>
+          </div>
+
           <p className="text-[11px] leading-relaxed text-slate-500">
-            BaseLayer runs every lesson in its sandbox before publishing: if a lesson doesn&apos;t
-            actually run, the import is refused (nothing is written) and you&apos;ll see why.
+            {skipVerify
+              ? 'Verification check is skipped. Lessons will be imported directly to your courses list.'
+              : 'BaseLayer runs every lesson in its sandbox before publishing: if a lesson doesn\u2019t actually run, the import is refused (nothing is written) and you\u2019ll see why.'}
           </p>
 
           <div className="flex justify-between gap-3 pt-1">
@@ -357,17 +404,19 @@ export default function ChatCourseImport({
             </button>
             <button
               type="button"
-              onClick={doImport}
+              onClick={() => doImport()}
               disabled={isImporting}
               className="flex items-center gap-2 rounded-lg bg-emerald-500 px-6 py-2.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isImporting ? (
                 <>
-                  <Loader size={15} className="animate-spin" /> Importing &amp; verifying lessons...
+                  <Loader size={15} className="animate-spin" />{' '}
+                  {skipVerify ? 'Importing course...' : 'Importing & verifying lessons...'}
                 </>
               ) : (
                 <>
-                  Import &amp; verify course <ArrowRight size={14} />
+                  {skipVerify ? 'Import course' : 'Import & verify course'}{' '}
+                  <ArrowRight size={14} />
                 </>
               )}
             </button>

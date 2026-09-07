@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from agentic_tools import CuratedCourseResult, CuratedLessonBlueprint
 from agentic_workflow import materialize_curated_course
-from sandbox_exec import execute_in_sandbox
+from sandbox_exec import SandboxUnavailableError, execute_in_sandbox, is_docker_daemon_failure
 
 MIN_IMPORT_LESSONS = 4
 MAX_IMPORT_LESSONS = 6
@@ -507,9 +507,12 @@ def verify_imported_course(curated: CuratedCourseResult) -> list[LessonVerifyRec
         solution_result = _run_lesson(lesson, run_solution=True)
         solution_passes = solution_result.get("exit_code") == 0
         if not solution_passes:
+            err = _stderr_snippet(solution_result)
+            if is_docker_daemon_failure(err):
+                raise SandboxUnavailableError(err)
             raise CourseVerificationError(
                 f"Lesson {lesson.order} ({lesson.title}) FAILED verification: its solution does "
-                f"not pass the tests.\n{_stderr_snippet(solution_result)}"
+                f"not pass the tests.\n{err}"
             )
 
         starter_result = _run_lesson(lesson, run_solution=False)

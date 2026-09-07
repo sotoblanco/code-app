@@ -222,3 +222,41 @@ class TestRunEndpoint:
         assert [kind for kind, _ in cleanup_calls] == ["kill", "rm"]
         assert cleanup_calls[0][1] == cleanup_calls[1][1]
         assert cleanup_calls[0][1].startswith("baselayer-run-")
+
+    def test_run_docker_daemon_failure_returns_exit_code_minus_one(
+        self, client: TestClient, auth_headers, monkeypatch
+    ):
+        def fake_run(cmd, *args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=1,
+                stdout="",
+                stderr="failed to connect to the docker API at unix:///Users/soto/.docker/run/docker.sock; check if the path is correct",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        response = client.post(
+            "/run",
+            json={"code": "print(1)", "language": "python"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["exit_code"] == -1
+        assert "Docker sandbox is unavailable" in body["stderr"]
+        assert "docker.sock" in body["stderr"]
+
+
+def test_is_docker_daemon_failure():
+    from sandbox_exec import is_docker_daemon_failure
+
+    assert is_docker_daemon_failure(
+        "failed to connect to the docker API at unix:///Users/soto/.docker/run/docker.sock"
+    )
+    assert is_docker_daemon_failure(
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock"
+    )
+    assert is_docker_daemon_failure("Is the docker daemon running?")
+    assert is_docker_daemon_failure("Unable to find image 'sandbox-runner:latest' locally")
+    assert not is_docker_daemon_failure("AssertionError: 2 != 3")
+    assert not is_docker_daemon_failure("")
